@@ -16,6 +16,16 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Recreate iOS Folder (Magic Fix for Windows)
+        run: |
+          rm -rf ios
+          flutter create . --platforms ios
+
+      - name: Set iOS Version to 15.0 for Firebase
+        run: |
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = .*/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' ios/Runner.xcodeproj/project.pbxproj
+          sed -i '' "s/^# platform :ios.*/platform :ios, '15.0'/" ios/Podfile
+
       - name: Install dependencies
         run: flutter pub get
 
