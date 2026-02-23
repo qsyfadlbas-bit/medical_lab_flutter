@@ -108,7 +108,9 @@ Future<void> _showLocalNotification(String title, String body) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // ✅ إعدادات الفايربيس الذكية (للويب، الآيفون، والأندرويد)
   if (kIsWeb) {
+    // إعدادات الويب
     await Firebase.initializeApp(
       options: const FirebaseOptions(
         apiKey: "AIzaSyD3oz1eKrRS077zCQTzee5QJ0Nlw02Orzo",
@@ -120,15 +122,37 @@ void main() async {
         measurementId: "G-MS196W9Z1H",
       ),
     );
-  } else {
-    await Firebase.initializeApp();
-    await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
-    await Workmanager().registerPeriodicTask(
-      "1",
-      fetchBackground,
-      frequency: const Duration(minutes: 15),
-      constraints: Constraints(networkType: NetworkType.connected),
+  } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+    // ✅ إعدادات الآيفون والآيباد (تمت إضافة الكود مالتك هنا)
+    await Firebase.initializeApp(
+      options: const FirebaseOptions(
+        apiKey: "AIzaSyD3oz1eKrRS077zCQTzee5QJ0Nlw02Orzo",
+        authDomain: "medical-lab-52086.firebaseapp.com",
+        projectId: "medical-lab-52086",
+        storageBucket: "medical-lab-52086.firebasestorage.app",
+        messagingSenderId: "731388772856",
+        appId: "1:731388772856:ios:d433f64684c9e30d95560d", // الكود اللي جبته
+        iosBundleId: "com.example.medicalLabFlutter",
+      ),
     );
+  } else {
+    // إعدادات الأندرويد (يعتمد على ملف google-services.json)
+    await Firebase.initializeApp();
+  }
+
+  // ✅ إعدادات Workmanager (للإشعارات) تشتغل بس على الموبايل
+  if (!kIsWeb) {
+    try {
+      await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+      await Workmanager().registerPeriodicTask(
+        "1",
+        fetchBackground,
+        frequency: const Duration(minutes: 15),
+        constraints: Constraints(networkType: NetworkType.connected),
+      );
+    } catch (e) {
+      print("Workmanager init failed: $e");
+    }
   }
 
   await SystemChrome.setPreferredOrientations([
