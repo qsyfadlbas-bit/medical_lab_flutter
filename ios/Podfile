@@ -1,6 +1,6 @@
 platform :ios, '15.0'
 
-# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+# تعطيل إحصائيات CocoaPods لتسريع البناء
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {
@@ -10,16 +10,26 @@ project 'Runner', {
 }
 
 def flutter_root
-  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __dir__)
+  # تصحيح المسار ليعمل بشكل ديناميكي على أي جهاز (ماك أو سحابة)
+  podfile_dir = File.dirname(File.realpath(__FILE__))
+  
+  # البحث عن ملف الإعدادات في المجلد الصحيح داخل ios/Flutter
+  generated_xcode_build_settings_path = File.expand_path(File.join('Flutter', 'Generated.xcconfig'), podfile_dir)
+  
+  # محاولة ثانية في حال كان المشروع يتبع الهيكل القديم
   unless File.exist?(generated_xcode_build_settings_path)
-    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+    generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), podfile_dir)
+  end
+
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "لم يتم العثور على ملف Generated.xcconfig. تأكد من تشغيل flutter pub get أولاً."
   end
 
   File.foreach(generated_xcode_build_settings_path) do |line|
     matches = line.match(/FLUTTER_ROOT\=(.*)/)
     return matches[1].strip if matches
   end
-  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+  raise "FLUTTER_ROOT not found. Try deleting Generated.xcconfig, then run flutter pub get"
 end
 
 require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
@@ -30,7 +40,9 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
+  # تصحيح كلمة FILE إلى __FILE__ البرمجية الصحيحة
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+  
   target 'RunnerTests' do
     inherit! :search_paths
   end
@@ -39,5 +51,10 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    
+    # توحيد إصدار النظام لجميع المكتبات لتجنب تعارض البناء
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+    end
   end
 end
