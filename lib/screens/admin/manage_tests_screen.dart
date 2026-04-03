@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:medical_lab_flutter/services/api_service.dart';
 
@@ -26,13 +25,19 @@ class _ManageTestsScreenState extends State<ManageTestsScreen> {
     try {
       final response = await _apiService.get('/tests');
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          _tests = data['data'];
-        });
+        // ✅ استخدام safeJsonDecode
+        final data = ApiService.safeJsonDecode(response);
+        if (data != null && data['data'] != null) {
+          setState(() {
+            _tests = data['data'];
+          });
+        }
       }
     } catch (e) {
       print("Error fetching tests: $e");
+      if (mounted) {
+        _showErrorSnackBar('خطأ في جلب التحاليل');
+      }
     } finally {
       setState(() => _isLoading = false);
     }
@@ -41,7 +46,7 @@ class _ManageTestsScreenState extends State<ManageTestsScreen> {
   // 2. إضافة تحليل جديد
   Future<void> _addTest(Map<String, dynamic> testData) async {
     try {
-      Navigator.pop(context); // إغلاق النافذة
+      Navigator.pop(context);
       _showLoadingSnackBar('جاري الإضافة...');
 
       final response = await _apiService.post('/tests', testData);
@@ -50,7 +55,8 @@ class _ManageTestsScreenState extends State<ManageTestsScreen> {
         _showSuccessSnackBar('✅ تم إضافة التحليل بنجاح');
         _fetchTests();
       } else {
-        throw Exception(response.body);
+        final body = ApiService.safeJsonDecode(response);
+        _showErrorSnackBar(body?['error'] ?? '❌ فشل الإضافة');
       }
     } catch (e) {
       _showErrorSnackBar('❌ فشل الإضافة: تأكد أن الكود غير مكرر');
@@ -60,7 +66,7 @@ class _ManageTestsScreenState extends State<ManageTestsScreen> {
   // ✅ 3. تعديل تحليل موجود
   Future<void> _updateTest(String id, Map<String, dynamic> testData) async {
     try {
-      Navigator.pop(context); // إغلاق النافذة
+      Navigator.pop(context);
       _showLoadingSnackBar('جاري التعديل...');
 
       final response = await _apiService.put('/tests/$id', testData);
@@ -69,7 +75,7 @@ class _ManageTestsScreenState extends State<ManageTestsScreen> {
         _showSuccessSnackBar('✅ تم تعديل البيانات بنجاح');
         _fetchTests();
       } else {
-        throw Exception(response.body);
+        _showErrorSnackBar('❌ فشل التعديل');
       }
     } catch (e) {
       print(e);
@@ -132,7 +138,7 @@ class _ManageTestsScreenState extends State<ManageTestsScreen> {
         SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 
-  // ✅ نافذة الإضافة والتعديل (مع التصنيفات الجديدة)
+  // ✅ نافذة الإضافة والتعديل
   void _showTestDialog({Map<String, dynamic>? testToEdit}) {
     final isEditing = testToEdit != null;
 
@@ -148,13 +154,12 @@ class _ManageTestsScreenState extends State<ManageTestsScreen> {
     String category =
         isEditing ? (testToEdit['category'] ?? 'فحوصات الدم') : 'فحوصات الدم';
 
-    // ✅ القائمة المحدثة (أضيفت لها الأقسام الجديدة والعروض)
     final categories = [
       'فحوصات الدم',
-      'الكيمياء الحيوية', // جديد
-      'فايروسات', // جديد
-      'مناعة', // جديد
-      'البكتيريا', // جديد
+      'الكيمياء الحيوية',
+      'فايروسات',
+      'مناعة',
+      'البكتيريا',
       'الهرمونات',
       'الفيتامينات',
       'وظائف الأعضاء',

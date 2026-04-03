@@ -1,10 +1,8 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:medical_lab_flutter/models/user_model.dart';
 import 'package:medical_lab_flutter/services/api_service.dart';
 
 class UserProvider with ChangeNotifier {
-  // ✅ استخدام الخدمة الجديدة
   final ApiService _apiService = ApiService();
 
   List<User> _users = [];
@@ -23,54 +21,74 @@ class UserProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // دالة لجلب جميع المستخدمين (للوحة تحكم الأدمن)
+  void clearError() {
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  // ✅ دالة لجلب جميع المستخدمين
   Future<void> fetchUsers() async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      // ✅ التصحيح: نستخدم دالة get العامة بدلاً من getUsers
       final response = await _apiService.get('/users');
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['success'] == true) {
+        // ✅ استخدام safeJsonDecode بدلاً من json.decode
+        final data = ApiService.safeJsonDecode(response);
+        if (data == null) {
+          _errorMessage = ApiService.getErrorMessage(response);
+          return;
+        }
+
+        if (data['success'] == true && data['data'] != null) {
           final List<dynamic> list = data['data'];
           _users = list.map((e) => User.fromJson(e)).toList();
         }
       } else {
-        _errorMessage = 'فشل تحميل القائمة';
+        _errorMessage = ApiService.getErrorMessage(response);
       }
     } catch (e) {
-      _errorMessage = 'خطأ في الاتصال: $e';
+      _errorMessage = 'خطأ في الاتصال بالسيرفر';
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  // تحديث الملف الشخصي
-  Future<bool> updateUserProfile(Map<String, dynamic> data) async {
+  // ✅ دالة تحديث الملف الشخصي
+  Future<bool> updateUserProfile(Map<String, dynamic> updateData) async {
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
-      // ✅ نستخدم دالة put للتحديث
-      final response = await _apiService.put('/users/profile', data);
+      final response =
+          await _apiService.put('/auth/update-profile', updateData);
 
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        if (responseData['success']) {
-          // تحديث البيانات محلياً
-          _currentUser = User.fromJson(responseData['data']);
-          notifyListeners();
-          return true;
-        }
+      // ✅ استخدام safeJsonDecode
+      final responseData = ApiService.safeJsonDecode(response);
+      if (responseData == null) {
+        _errorMessage = ApiService.getErrorMessage(response);
+        return false;
       }
-      return false;
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (responseData['success'] == true && responseData['data'] != null) {
+          _currentUser = User.fromJson(responseData['data']);
+        }
+        return true;
+      } else {
+        _errorMessage = responseData['error'] ??
+            responseData['message'] ??
+            'فشل تحديث البيانات';
+        return false;
+      }
     } catch (e) {
-      _errorMessage = 'فشل التحديث: $e';
+      print("Update Profile Error: $e");
+      _errorMessage = 'خطأ في الاتصال بالسيرفر';
       return false;
     } finally {
       _isLoading = false;

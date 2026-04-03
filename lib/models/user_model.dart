@@ -6,6 +6,7 @@ class User {
   final String email;
   final String name;
   final String? phone;
+  final String? address; // ✅ 1. تم إضافة حقل العنوان هنا
   final String role; // ✅ هذا هو الحقل الأهم للتوجيه
   final DateTime createdAt;
   final DateTime? updatedAt;
@@ -17,6 +18,7 @@ class User {
     required this.email,
     required this.name,
     this.phone,
+    this.address, // ✅ 2. تم إضافته للـ Constructor
     required this.role,
     required this.createdAt,
     this.updatedAt,
@@ -34,6 +36,7 @@ class User {
       email: json['email']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
       phone: json['phone']?.toString(),
+      address: json['address']?.toString(), // ✅ 3. تم إضافته لقراءة الـ JSON
 
       // ✅ قراءة الدور، وإذا لم يوجد نعتبره مستخدماً عادياً
       role: json['role']?.toString() ?? 'USER',

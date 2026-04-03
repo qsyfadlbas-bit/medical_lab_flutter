@@ -20,9 +20,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final _nameController = TextEditingController();
-  final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
-  // final _usernameController = TextEditingController(); // ❌ لم نعد بحاجة لهذا
   final _passwordController = TextEditingController();
   final _adminCodeController = TextEditingController();
   final _addressController = TextEditingController();
@@ -33,9 +31,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void dispose() {
     _nameController.dispose();
-    _emailController.dispose();
     _phoneController.dispose();
-    // _usernameController.dispose(); // ❌
     _passwordController.dispose();
     _adminCodeController.dispose();
     _addressController.dispose();
@@ -54,7 +50,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
   }
 
-  // ... (دالة _getCurrentLocation تبقى كما هي بدون تغيير) ...
+  // ✅ التحقق من كلمة المرور — 6 أحرف فقط
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'كلمة المرور مطلوبة';
+    }
+    if (value.length < 6) {
+      return 'كلمة المرور يجب أن تكون 6 أحرف على الأقل';
+    }
+    return null;
+  }
+
   Future<void> _getCurrentLocation() async {
     setState(() => _isGettingLocation = true);
     try {
@@ -63,8 +69,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('يرجى تفعيل خدمة الموقع (GPS)')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('يرجى تفعيل خدمة الموقع (GPS)',
+                style: TextStyle(fontFamily: 'Cairo'))));
         setState(() => _isGettingLocation = false);
         return;
       }
@@ -73,16 +80,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text('تم رفض إذن الموقع')));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('تم رفض إذن الموقع',
+                  style: TextStyle(fontFamily: 'Cairo'))));
           setState(() => _isGettingLocation = false);
           return;
         }
       }
 
       if (permission == LocationPermission.deniedForever) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('إذن الموقع مرفوض نهائياً')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('إذن الموقع مرفوض نهائياً',
+                style: TextStyle(fontFamily: 'Cairo'))));
         setState(() => _isGettingLocation = false);
         return;
       }
@@ -102,7 +111,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
             _addressController.text = fullAddress;
           });
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('تم تحديد الموقع بنجاح'),
+              content: Text('تم تحديد الموقع بنجاح',
+                  style: TextStyle(fontFamily: 'Cairo')),
               backgroundColor: Colors.green));
         }
       } catch (e) {
@@ -113,8 +123,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     } catch (e) {
       print("Location Error: $e");
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('فشل تحديد الموقع')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content:
+              Text('فشل تحديد الموقع', style: TextStyle(fontFamily: 'Cairo'))));
     } finally {
       setState(() => _isGettingLocation = false);
     }
@@ -129,15 +140,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
       try {
         final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
-        // ✅ هنا التغيير: نمرر الاسم الكامل كـ username أيضاً
+        final phone = _phoneController.text.trim();
+        final generatedUsername = phone;
+        final generatedEmail = "$phone@lab.com";
+
         final success = await authProvider.register(
-          name: _nameController.text,
-          username: _nameController.text, // 👈 استخدمنا الاسم الكامل هنا
-          email: _emailController.text,
+          name: _nameController.text.trim(),
+          username: generatedUsername,
+          email: generatedEmail,
           password: _passwordController.text,
-          phone: _phoneController.text,
-          adminCode: _adminCodeController.text,
-          address: _addressController.text,
+          phone: phone,
+          adminCode: _adminCodeController.text.trim(),
+          address: _addressController.text.trim(),
         );
 
         if (!mounted) return;
@@ -155,9 +169,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
               (route) => false,
             );
           } else {
+            // ✅ الإصلاح: استخدام ResponsiveHomeScreen بدل HomeScreen
+            // لتوحيد سلوك التنقل مع شاشة تسجيل الدخول
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => const HomeScreen()),
+              MaterialPageRoute(
+                  builder: (context) => const ResponsiveHomeScreen()),
               (route) => false,
             );
           }
@@ -179,7 +196,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
           });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-                content: Text('حدث خطأ غير متوقع'),
+                content: Text('حدث خطأ غير متوقع',
+                    style: TextStyle(fontFamily: 'Cairo')),
                 backgroundColor: Colors.red),
           );
         }
@@ -204,7 +222,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             key: _formKey,
             child: Column(
               children: [
-                // الاسم الكامل (الذي سيستخدم كاسم مستخدم أيضاً)
+                // الاسم الكامل
                 TextFormField(
                   controller: _nameController,
                   decoration: InputDecoration(
@@ -217,21 +235,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const Gap(16),
 
-                // ❌ تم حذف حقل اسم المستخدم من هنا
-
                 // الهاتف
                 TextFormField(
                   controller: _phoneController,
+                  keyboardType: TextInputType.phone,
                   decoration: InputDecoration(
                     labelText: 'رقم الهاتف',
                     prefixIcon: const Icon(Icons.phone),
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12)),
                   ),
+                  validator: (v) {
+                    if (v == null || v.isEmpty) return 'مطلوب';
+                    if (v.trim().length < 3) return 'رقم الهاتف قصير جداً';
+                    return null;
+                  },
                 ),
                 const Gap(16),
 
-                // حقل العنوان
+                // حقل العنوان والموقع
                 TextFormField(
                   controller: _addressController,
                   decoration: InputDecoration(
@@ -259,7 +281,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const Gap(16),
 
-                // كلمة المرور
+                // ✅ كلمة المرور — مع تحقق متوافق مع الباك إند
                 TextFormField(
                   controller: _passwordController,
                   obscureText: true,
@@ -268,8 +290,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     prefixIcon: const Icon(Icons.lock),
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12)),
+                    // ✅ إضافة نص توضيحي لشروط كلمة المرور
+                    helperText: '6 أحرف على الأقل',
+                    helperStyle:
+                        const TextStyle(fontFamily: 'Cairo', fontSize: 11),
                   ),
-                  validator: (v) => v!.length < 6 ? 'كلمة المرور قصيرة' : null,
+                  // ✅ استخدام دالة التحقق المتوافقة مع الباك إند
+                  validator: _validatePassword,
                 ),
                 const Gap(16),
 

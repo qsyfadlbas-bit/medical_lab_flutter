@@ -1,135 +1,60 @@
-import 'dart:convert';
-import 'package:flutter/material.dart'; // هذا السطر يحل مشكلة Color و Icons و IconData
-import 'user_model.dart'; // هذا السطر يحل مشكلة User و Address
-import 'inspection_model.dart'; // هذا السطر يحل مشكلة Inspection
+import 'package:flutter/material.dart';
+
+// ❌ تم إيقاف استيراد user_model و inspection_model لأننا لم نعد بحاجة لها هنا (لتخفيف الكود ومنع الأخطاء)
 
 class Order {
   final String id;
   final String orderNumber;
-  final String status;
-  final double totalAmount;
-  final double? discountAmount;
-  final double? taxAmount;
-  final double finalAmount;
-  final String paymentMethod;
-  final String paymentStatus;
-  final String? paymentId;
-  final DateTime? paymentDate;
-  final String? notes;
   final String userId;
-  final String? addressId;
-  final DateTime? deliveryDate;
-  final String? deliveryTime;
-  final String? trackingNumber;
-  final String? shippingCompany;
-  final double? shippingCost;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-
-  // العلاقات
-  final User? user;
-  final List<OrderItem>? items;
-  final List<Inspection>? inspections;
+  final String patientName;
+  final String phone;
+  final String? location;
+  final double totalAmount;
+  final String status;
+  final DateTime date;
+  final List<OrderItem> items;
 
   Order({
     required this.id,
     required this.orderNumber,
-    required this.status,
-    required this.totalAmount,
-    this.discountAmount,
-    this.taxAmount,
-    required this.finalAmount,
-    required this.paymentMethod,
-    required this.paymentStatus,
-    this.paymentId,
-    this.paymentDate,
-    this.notes,
     required this.userId,
-    this.addressId,
-    this.deliveryDate,
-    this.deliveryTime,
-    this.trackingNumber,
-    this.shippingCompany,
-    this.shippingCost,
-    required this.createdAt,
-    required this.updatedAt,
-    this.user,
-    this.items,
-    this.inspections,
+    required this.patientName,
+    required this.phone,
+    this.location,
+    required this.totalAmount,
+    required this.status,
+    required this.date,
+    required this.items,
   });
 
   factory Order.fromJson(Map<String, dynamic> json) {
+    var itemsList = json['items'] as List? ?? [];
+    List<OrderItem> parsedItems =
+        itemsList.map((i) => OrderItem.fromJson(i)).toList();
+
     return Order(
-      id: json['id'],
-      orderNumber: json['orderNumber'],
-      status: json['status'],
+      id: json['id']?.toString() ?? '',
+      orderNumber:
+          json['orderNumber']?.toString() ?? json['id']?.toString() ?? '',
+      userId: json['userId']?.toString() ?? '',
+      patientName: json['patientName']?.toString() ?? '',
+      phone: json['phone']?.toString() ?? '',
+      // دعم قراءة العنوان سواء كان اسمه location أو address في السيرفر
+      location: json['location']?.toString() ?? json['address']?.toString(),
       totalAmount:
-          json['totalAmount'] != null ? json['totalAmount'].toDouble() : 0.0,
-      discountAmount: json['discountAmount'] != null
-          ? json['discountAmount'].toDouble()
-          : null,
-      taxAmount:
-          json['taxAmount'] != null ? json['taxAmount'].toDouble() : null,
-      finalAmount:
-          json['finalAmount'] != null ? json['finalAmount'].toDouble() : 0.0,
-      paymentMethod: json['paymentMethod'],
-      paymentStatus: json['paymentStatus'],
-      paymentId: json['paymentId'],
-      paymentDate: json['paymentDate'] != null
-          ? DateTime.parse(json['paymentDate'])
-          : null,
-      notes: json['notes'],
-      userId: json['userId'],
-      addressId: json['addressId'],
-      deliveryDate: json['deliveryDate'] != null
-          ? DateTime.parse(json['deliveryDate'])
-          : null,
-      deliveryTime: json['deliveryTime'],
-      trackingNumber: json['trackingNumber'],
-      shippingCompany: json['shippingCompany'],
-      shippingCost:
-          json['shippingCost'] != null ? json['shippingCost'].toDouble() : null,
-      createdAt: DateTime.parse(json['createdAt']),
-      updatedAt: DateTime.parse(json['updatedAt']),
-      user: json['user'] != null ? User.fromJson(json['user']) : null,
-      items: json['items'] != null
-          ? (json['items'] as List)
-              .map((item) => OrderItem.fromJson(item))
-              .toList()
-          : null,
-      inspections: json['inspections'] != null
-          ? (json['inspections'] as List)
-              .map((item) => Inspection.fromJson(item))
-              .toList()
-          : null,
+          double.tryParse(json['totalAmount']?.toString() ?? '0') ?? 0.0,
+      status: json['status']?.toString() ?? 'PENDING',
+      date: json['date'] != null || json['createdAt'] != null
+          ? DateTime.parse((json['date'] ?? json['createdAt']).toString())
+              .toLocal()
+          : DateTime.now(),
+      items: parsedItems,
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'orderNumber': orderNumber,
-      'status': status,
-      'totalAmount': totalAmount,
-      'discountAmount': discountAmount,
-      'taxAmount': taxAmount,
-      'finalAmount': finalAmount,
-      'paymentMethod': paymentMethod,
-      'paymentStatus': paymentStatus,
-      'paymentId': paymentId,
-      'paymentDate': paymentDate?.toIso8601String(),
-      'notes': notes,
-      'userId': userId,
-      'addressId': addressId,
-      'deliveryDate': deliveryDate?.toIso8601String(),
-      'deliveryTime': deliveryTime,
-      'trackingNumber': trackingNumber,
-      'shippingCompany': shippingCompany,
-      'shippingCost': shippingCost,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
-    };
-  }
+  // ==========================================
+  // ✅ تم الاحتفاظ بدوال التصميم والترجمة الخاصة بك
+  // ==========================================
 
   String get statusArabic {
     switch (status) {
@@ -214,66 +139,37 @@ class Order {
 }
 
 class OrderItem {
-  final String id;
-  final String orderId;
-  final String productId;
-  final String productName;
-  final String? productDescription;
-  final double unitPrice;
+  final String testId;
+  final String testName;
+  final double price;
   final int quantity;
-  final double totalPrice;
-  final String? specifications;
-  final Map<String, dynamic>? metadata;
-  final DateTime createdAt;
-  final DateTime updatedAt;
 
   OrderItem({
-    required this.id,
-    required this.orderId,
-    required this.productId,
-    required this.productName,
-    this.productDescription,
-    required this.unitPrice,
+    required this.testId,
+    required this.testName,
+    required this.price,
     required this.quantity,
-    required this.totalPrice,
-    this.specifications,
-    this.metadata,
-    required this.createdAt,
-    required this.updatedAt,
   });
 
-  factory OrderItem.fromJson(Map<String, dynamic> json) {
-    return OrderItem(
-      id: json['id'],
-      orderId: json['orderId'],
-      productId: json['productId'],
-      productName: json['productName'],
-      productDescription: json['productDescription'],
-      unitPrice: json['unitPrice'] != null ? json['unitPrice'].toDouble() : 0.0,
-      quantity: json['quantity'],
-      totalPrice:
-          json['totalPrice'] != null ? json['totalPrice'].toDouble() : 0.0,
-      specifications: json['specifications'],
-      metadata: json['metadata'] ?? {},
-      createdAt: DateTime.parse(json['createdAt']),
-      updatedAt: DateTime.parse(json['updatedAt']),
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'orderId': orderId,
-      'productId': productId,
-      'productName': productName,
-      'productDescription': productDescription,
-      'unitPrice': unitPrice,
-      'quantity': quantity,
-      'totalPrice': totalPrice,
-      'specifications': specifications,
-      'metadata': metadata,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
-    };
+  factory OrderItem.fromJson(dynamic json) {
+    // التحقق تحسباً لأي بيانات قديمة مسجلة كنص عادي
+    if (json is Map<String, dynamic>) {
+      return OrderItem(
+        testId: json['testId']?.toString() ?? json['id']?.toString() ?? '',
+        testName: json['testName']?.toString() ??
+            json['nameAr']?.toString() ??
+            'تحليل',
+        price: double.tryParse(json['price']?.toString() ?? '0') ?? 0.0,
+        quantity: int.tryParse(json['quantity']?.toString() ?? '1') ?? 1,
+      );
+    } else {
+      // إذا كان الباك إند القديم يرسل اسم التحليل كنص فقط
+      return OrderItem(
+        testId: '',
+        testName: json.toString(),
+        price: 0.0,
+        quantity: 1,
+      );
+    }
   }
 }

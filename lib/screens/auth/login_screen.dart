@@ -27,7 +27,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
 
-  // ✅ 1. إضافة متغير محلي للتحميل (لضمان التحكم الكامل في الدائرة)
   bool _isLocalLoading = false;
 
   @override
@@ -37,11 +36,9 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ✅ 2. إضافة دالة لتهيئة الشاشة والتأكد من تصفير أي أخطاء سابقة
   @override
   void initState() {
     super.initState();
-    // نقوم بتصفير حالة التحميل عند فتح الشاشة
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         setState(() {
@@ -55,7 +52,6 @@ class _LoginScreenState extends State<LoginScreen> {
     if (_formKey.currentState!.validate()) {
       FocusScope.of(context).unfocus();
 
-      // ✅ 3. تشغيل التحميل محلياً
       setState(() {
         _isLocalLoading = true;
       });
@@ -63,7 +59,6 @@ class _LoginScreenState extends State<LoginScreen> {
       try {
         final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
-        // محاولة تسجيل الدخول
         final success = await authProvider.login(
           username: _usernameController.text,
           password: _passwordController.text,
@@ -71,7 +66,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
         if (!mounted) return;
 
-        // ✅ 4. إيقاف التحميل فوراً بعد استلام الرد (سواء نجح أو فشل)
         setState(() {
           _isLocalLoading = false;
         });
@@ -87,9 +81,12 @@ class _LoginScreenState extends State<LoginScreen> {
               (route) => false,
             );
           } else {
+            // ✅ الإصلاح: استخدام ResponsiveHomeScreen بدل HomeScreen
+            // لأن ResponsiveHomeScreen تتعامل مع أحجام الشاشات المختلفة
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(builder: (context) => const HomeScreen()),
+              MaterialPageRoute(
+                  builder: (context) => const ResponsiveHomeScreen()),
               (route) => false,
             );
           }
@@ -106,7 +103,6 @@ class _LoginScreenState extends State<LoginScreen> {
           );
         }
       } catch (e) {
-        // ✅ 5. في حال حدوث خطأ غير متوقع (مثل انقطاع نت)، نوقف التحميل أيضاً
         if (mounted) {
           setState(() {
             _isLocalLoading = false;
@@ -124,7 +120,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // ملاحظة: لم نعد بحاجة لمراقبة isLoading من البروفايدر لرسم الدائرة، نستخدم المتغير المحلي
     final primaryColor = Theme.of(context).primaryColor;
 
     return Scaffold(
@@ -186,7 +181,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextFormField(
                     controller: _usernameController,
                     decoration: InputDecoration(
-                      labelText: 'اسم المستخدم',
+                      labelText: 'رقم المستخدم',
                       prefixIcon: const Icon(Icons.person_outline),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -242,8 +237,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const Gap(24),
-
-                  // ✅ 6. استخدام المتغير المحلي _isLocalLoading للتحقق
                   if (_isLocalLoading)
                     const Center(child: CircularProgressIndicator())
                   else

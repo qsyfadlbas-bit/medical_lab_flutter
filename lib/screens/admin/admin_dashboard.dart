@@ -1,17 +1,10 @@
-import 'dart:convert';
-import 'dart:async'; // مكتبة المؤقت
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:medical_lab_flutter/providers/auth_provider.dart';
 import 'package:medical_lab_flutter/services/api_service.dart';
-import 'package:medical_lab_flutter/screens/auth/login_screen.dart';
-import 'package:gap/gap.dart';
-
-// ✅ استيراد الصفحات الفرعية
-import 'package:medical_lab_flutter/screens/admin/manage_tests_screen.dart';
 import 'package:medical_lab_flutter/screens/admin/orders_log_screen.dart';
-import 'package:medical_lab_flutter/screens/admin/users_list_screen.dart';
-import 'package:medical_lab_flutter/screens/admin/admin_settings_screen.dart';
+import 'package:medical_lab_flutter/screens/admin/manage_tests_screen.dart';
+import 'package:medical_lab_flutter/providers/auth_provider.dart';
+import 'package:medical_lab_flutter/screens/auth/login_screen.dart';
+import 'package:provider/provider.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -22,289 +15,219 @@ class AdminDashboard extends StatefulWidget {
 
 class _AdminDashboardState extends State<AdminDashboard> {
   final ApiService _apiService = ApiService();
-  String _ordersCount = '0';
-  String _usersCount = '0';
-  String _revenue = '0';
 
-  // متغيرات للإشعارات
-  Timer? _timer;
-  int _lastOrdersCount = -1; // نبدأ بـ -1 لنتأكد أن أول تحميل لا يطلق إشعاراً
+  bool _isLoading = true;
+
+  // الإحصائيات
+  int _totalOrders = 0;
+  int _totalRevenue = 0;
+  int _totalTests = 0;
+  int _totalUsers = 0;
 
   @override
   void initState() {
     super.initState();
-    // جلب البيانات فوراً عند الفتح
-    _fetchStats(firstTime: true);
-
-    // ✅ جعلنا المؤقت كل 5 ثواني للتجربة السريعة
-    _timer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      _checkNewOrders();
-    });
+    _fetchDashboardData();
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
+  Future<void> _fetchDashboardData() async {
+    setState(() => _isLoading = true);
 
-  // ✅ التحقق من الطلبات الجديدة في الخلفية
-  Future<void> _checkNewOrders() async {
     try {
-      // طباعة للتأكد أن الوظيفة تعمل
-      print("🔄 Checking for new orders...");
-
-      final response = await _apiService.get('/orders');
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body)['data'] as List;
-        int currentCount = data.length;
-
-        print("📊 Current: $currentCount, Last: $_lastOrdersCount");
-
-        // إذا كان هذا ليس أول تحميل، والعدد الجديد أكبر من القديم
-        if (_lastOrdersCount != -1 && currentCount > _lastOrdersCount) {
-          print("🔔 NEW ORDER DETECTED!");
-          _showNotification();
-          _fetchStats(); // تحديث الواجهة
+      // 1. جلب الطلبات لحساب العدد والإيرادات
+      final ordersRes = await _apiService.get('/orders');
+      if (ordersRes.statusCode == 200) {
+        // ✅ استخدام safeJsonDecode بدلاً من json.decode
+        final body = ApiService.safeJsonDecode(ordersRes);
+        if (body != null && body['data'] != null) {
+          final ordersData = body['data'] as List;
+          int revenue = 0;
+          for (var order in ordersData) {
+            if (order['status'] == 'COMPLETED' ||
+                order['status'] == 'PROCESSING') {
+              revenue += (order['totalAmount'] as num?)?.toInt() ?? 0;
+            }
+          }
+          _totalOrders = ordersData.length;
+          _totalRevenue = revenue;
         }
+      }
 
-        // تحديث الرقم الأخير دائماً
-        _lastOrdersCount = currentCount;
+      // 2. جلب عدد التحاليل
+      final testsRes = await _apiService.get('/tests');
+      if (testsRes.statusCode == 200) {
+        final body = ApiService.safeJsonDecode(testsRes);
+        if (body != null && body['data'] != null) {
+          _totalTests = (body['data'] as List).length;
+        }
+      }
+
+      // 3. جلب عدد المستخدمين
+      final usersRes = await _apiService.get('/users');
+      if (usersRes.statusCode == 200) {
+        final body = ApiService.safeJsonDecode(usersRes);
+        if (body != null && body['data'] != null) {
+          _totalUsers = (body['data'] as List).length;
+        }
       }
     } catch (e) {
-      print("❌ Error checking orders: $e");
+      print("Dashboard Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'خطأ في جلب البيانات: ${e.toString().contains("Timeout") ? "السيرفر بطيء" : "تحقق من الاتصال"}',
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
-  // ✅ عرض إشعار احترافي
-  void _showNotification() {
-    // تشغيل صوت أو اهتزاز هنا لو أردت مستقبلاً
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.notifications_active, color: Colors.white),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text("🔔 طلب جديد!",
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          fontFamily: 'Cairo')),
-                  Text("وصل طلب تحليل جديد الآن",
-                      style: TextStyle(fontFamily: 'Cairo', fontSize: 12)),
-                ],
-              ),
-            ),
-          ],
-        ),
-        backgroundColor: Colors.redAccent, // لون ملفت للانتباه
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        margin: const EdgeInsets.only(
-            top: 20, left: 10, right: 10, bottom: 20), // مكان ظهور الإشعار
-        duration: const Duration(seconds: 6),
-        action: SnackBarAction(
-          label: 'مشاهدة',
-          textColor: Colors.yellow,
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const OrdersLogScreen()),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  // ✅ جلب الإحصائيات وتحديث الواجهة
-  Future<void> _fetchStats({bool firstTime = false}) async {
-    try {
-      final ordersRes = await _apiService.get('/orders');
-      final usersRes = await _apiService.get('/users');
-
-      if (ordersRes.statusCode == 200 && usersRes.statusCode == 200) {
-        final ordersData = json.decode(ordersRes.body)['data'] as List;
-        final usersData = json.decode(usersRes.body)['data'] as List;
-
-        // عند فتح التطبيق لأول مرة، نحفظ العدد الحالي فقط دون إشعار
-        if (firstTime) {
-          _lastOrdersCount = ordersData.length;
-        }
-
-        // حساب المجموع الكلي للإيرادات
-        double totalRevenue = 0;
-        for (var order in ordersData) {
-          totalRevenue += (order['totalAmount'] ?? 0);
-        }
-
-        if (mounted) {
-          setState(() {
-            _ordersCount = ordersData.length.toString();
-            _usersCount = usersData.length.toString();
-            _revenue = totalRevenue > 1000
-                ? '${(totalRevenue / 1000).toStringAsFixed(1)}K'
-                : totalRevenue.toStringAsFixed(0);
-          });
-        }
-      }
-    } catch (e) {
-      print("Error fetching stats: $e");
+  void _logout() async {
+    await Provider.of<AuthProvider>(context, listen: false).logout();
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
-
     return Scaffold(
-      backgroundColor: Colors.grey[100],
+      backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
         title: const Text('لوحة إدارة المختبر',
-            style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-                fontFamily: 'Cairo')),
+            style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+        backgroundColor: const Color(0xFF3F51B5),
         centerTitle: true,
-        backgroundColor: Colors.indigo,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.logout),
+          onPressed: _logout,
+          tooltip: 'تسجيل خروج',
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
-            onPressed: () => _fetchStats(),
+            icon: const Icon(Icons.refresh),
+            onPressed: _fetchDashboardData,
+            tooltip: 'تحديث البيانات',
           ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white),
-            onPressed: () async {
-              await authProvider.logout();
-              if (context.mounted) {
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const LoginScreen(userType: 'User')),
-                  (route) => false,
-                );
-              }
-            },
-          )
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () => _fetchStats(),
+        onRefresh: _fetchDashboardData,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(20.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ترحيب
               const Text(
                 'أهلاً بك أيها المدير،',
                 style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'Cairo',
-                    color: Colors.indigo),
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF3F51B5),
+                  fontFamily: 'Cairo',
+                ),
               ),
-              const Text(
+              const SizedBox(height: 5),
+              Text(
                 'إليك ملخص سريع لما يحدث في المختبر اليوم.',
                 style: TextStyle(
-                    fontSize: 14, color: Colors.grey, fontFamily: 'Cairo'),
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                  fontFamily: 'Cairo',
+                ),
               ),
-              const Gap(20),
-
-              // إحصائيات سريعة
-              Row(
-                children: [
-                  _buildStatCard('الطلبات الكلية', _ordersCount, Colors.orange,
-                      Icons.shopping_cart),
-                  const Gap(16),
-                  _buildStatCard('الإيرادات (د.ع)', _revenue, Colors.green,
-                      Icons.attach_money),
-                ],
-              ),
-              const Gap(16),
-              // صف ثاني للإحصائيات
-              Row(
-                children: [
-                  _buildStatCard(
-                      'المستخدمين', _usersCount, Colors.teal, Icons.people),
-                  const Gap(16),
-                  _buildStatCard(
-                      'التحاليل النشطة', '∞', Colors.blue, Icons.science),
-                ],
-              ),
-              const Gap(24),
-
+              const SizedBox(height: 25),
+              if (_isLoading)
+                const Center(child: CircularProgressIndicator())
+              else
+                GridView.count(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 15,
+                  mainAxisSpacing: 15,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  childAspectRatio: 1.3,
+                  children: [
+                    _buildStatCard(
+                      title: 'الإيرادات (د.ع)',
+                      value: '$_totalRevenue',
+                      icon: Icons.attach_money,
+                      color: const Color(0xFF4CAF50),
+                    ),
+                    _buildStatCard(
+                      title: 'الطلبات الكلية',
+                      value: '$_totalOrders',
+                      icon: Icons.shopping_cart,
+                      color: const Color(0xFFFF9800),
+                    ),
+                    _buildStatCard(
+                      title: 'التحاليل النشطة',
+                      value: '$_totalTests',
+                      icon: Icons.science,
+                      color: const Color(0xFF2196F3),
+                    ),
+                    _buildStatCard(
+                      title: 'المستخدمين',
+                      value: '$_totalUsers',
+                      icon: Icons.people,
+                      color: const Color(0xFF009688),
+                    ),
+                  ],
+                ),
+              const SizedBox(height: 30),
               const Text(
                 'التحكم السريع',
                 style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'Cairo'),
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                  fontFamily: 'Cairo',
+                ),
               ),
-              const Gap(16),
-
-              // شبكة التحكم
-              GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
+              const SizedBox(height: 15),
+              Row(
                 children: [
-                  _buildActionCard(
-                    context,
-                    title: 'إدارة التحاليل',
-                    icon: Icons.science,
-                    color: Colors.blue,
-                    onTap: () {
-                      Navigator.push(
+                  Expanded(
+                    child: _buildActionCard(
+                      title: 'سجل الطلبات',
+                      icon: Icons.assignment,
+                      iconColor: Colors.purple,
+                      onTap: () {
+                        Navigator.push(
                           context,
                           MaterialPageRoute(
-                              builder: (context) => const ManageTestsScreen()));
-                    },
+                              builder: (_) => const OrdersLogScreen()),
+                        ).then((_) => _fetchDashboardData());
+                      },
+                    ),
                   ),
-                  _buildActionCard(
-                    context,
-                    title: 'سجل الطلبات',
-                    icon: Icons.assignment,
-                    color: Colors.purple,
-                    onTap: () {
-                      Navigator.push(
+                  const SizedBox(width: 15),
+                  Expanded(
+                    child: _buildActionCard(
+                      title: 'إدارة التحاليل',
+                      icon: Icons.biotech,
+                      iconColor: Colors.blue,
+                      onTap: () {
+                        Navigator.push(
                           context,
                           MaterialPageRoute(
-                              builder: (context) => const OrdersLogScreen()));
-                    },
-                  ),
-                  _buildActionCard(
-                    context,
-                    title: 'المستخدمين',
-                    icon: Icons.people_alt,
-                    color: Colors.teal,
-                    onTap: () {
-                      Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) => const UsersListScreen()));
-                    },
-                  ),
-                  _buildActionCard(
-                    context,
-                    title: 'الإعدادات',
-                    icon: Icons.settings,
-                    color: Colors.grey,
-                    onTap: () {
-                      Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) =>
-                                  const AdminSettingsScreen()));
-                    },
+                              builder: (_) => const ManageTestsScreen()),
+                        ).then((_) => _fetchDashboardData());
+                      },
+                    ),
                   ),
                 ],
               ),
@@ -316,70 +239,96 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _buildStatCard(
-      String title, String value, Color color, IconData icon) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-                color: color.withOpacity(0.4),
-                blurRadius: 10,
-                offset: const Offset(0, 4))
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: Colors.white, size: 30),
-            const Gap(10),
-            Text(value,
+      {required String title,
+      required String value,
+      required IconData icon,
+      required Color color}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.4),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(15),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Icon(icon, color: Colors.white, size: 30),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                value,
                 style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white)),
-            Text(title,
-                style: const TextStyle(
-                    fontSize: 14, color: Colors.white70, fontFamily: 'Cairo')),
-          ],
-        ),
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                  fontFamily: 'Cairo',
+                ),
+              ),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white.withOpacity(0.9),
+                  fontFamily: 'Cairo',
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildActionCard(BuildContext context,
+  Widget _buildActionCard(
       {required String title,
       required IconData icon,
-      required Color color,
+      required Color iconColor,
       required VoidCallback onTap}) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(15),
       child: Container(
+        height: 120,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(15),
           boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 10,
+              offset: const Offset(0, 5),
+            ),
           ],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
-                  color: color.withOpacity(0.1), shape: BoxShape.circle),
-              child: Icon(icon, size: 32, color: color),
+                color: iconColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: iconColor, size: 30),
             ),
-            const Gap(12),
-            Text(title,
-                style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'Cairo')),
+            const SizedBox(height: 10),
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+                fontFamily: 'Cairo',
+              ),
+            ),
           ],
         ),
       ),

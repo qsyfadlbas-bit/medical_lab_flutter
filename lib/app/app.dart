@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:medical_lab_flutter/screens/landing/landing_screen.dart';
-import 'package:medical_lab_flutter/screens/user/user_dashboard.dart';
-import 'package:medical_lab_flutter/screens/admin/admin_dashboard.dart';
-import 'package:medical_lab_flutter/screens/developer/developer_dashboard.dart';
-import 'package:medical_lab_flutter/services/auth_service.dart';
 import 'package:provider/provider.dart';
 import 'package:medical_lab_flutter/providers/auth_provider.dart';
+
+// استيراد الشاشات الأساسية
+import 'package:medical_lab_flutter/screens/landing/landing_screen.dart';
+import 'package:medical_lab_flutter/screens/home/home_screen.dart';
+import 'package:medical_lab_flutter/screens/admin/admin_dashboard.dart';
 
 class App extends StatefulWidget {
   const App({super.key});
@@ -17,27 +17,30 @@ class App extends StatefulWidget {
 class _AppState extends State<App> {
   bool _isLoading = true;
   String? _userRole;
-  bool _isLoggedIn = false;
 
   @override
   void initState() {
     super.initState();
-    _checkAuthStatus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAuthStatus();
+    });
   }
 
   Future<void> _checkAuthStatus() async {
-    final isLoggedIn = await AuthService.isLoggedIn();
-    final role = await AuthService.getUserRole();
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final role = await authProvider.tryAutoLogin();
 
-    setState(() {
-      _isLoggedIn = isLoggedIn;
-      _userRole = role;
-      _isLoading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _userRole = role;
+        _isLoading = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // 1. شاشة التحميل أثناء فحص التوكن
     if (_isLoading) {
       return const Scaffold(
         body: Center(
@@ -46,18 +49,17 @@ class _AppState extends State<App> {
       );
     }
 
-    if (!_isLoggedIn) {
+    // 2. إذا لم يكن هناك دور (Role)، نأخذه لشاشة البداية
+    if (_userRole == null) {
       return const LandingScreen();
     }
 
-    switch (_userRole) {
-      case 'ADMIN':
-        return const AdminDashboard();
-      case 'DEVELOPER':
-        return const DeveloperDashboard();
-      case 'USER':
-      default:
-        return const UserDashboard();
+    // 3. توجيه المستخدم حسب دوره الحقيقي
+    if (_userRole == 'ADMIN') {
+      return const AdminDashboard();
+    } else {
+      // ✅ الإصلاح: استخدام ResponsiveHomeScreen بدل HomeScreen
+      return const ResponsiveHomeScreen();
     }
   }
 }

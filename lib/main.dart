@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -17,7 +16,7 @@ import 'package:medical_lab_flutter/app/theme.dart';
 import 'package:medical_lab_flutter/providers/auth_provider.dart';
 import 'package:medical_lab_flutter/providers/user_provider.dart';
 import 'package:medical_lab_flutter/providers/order_provider.dart';
-import 'package:medical_lab_flutter/providers/inspection_provider.dart';
+import 'package:medical_lab_flutter/services/api_service.dart';
 
 // استيراد الشاشات
 import 'package:medical_lab_flutter/screens/auth/login_screen.dart';
@@ -47,14 +46,17 @@ Future<void> _checkNewOrders() async {
   if (token != null && role == 'ADMIN') {
     try {
       final response = await http.get(
-        Uri.parse('https://medical-lab-backend.vercel.app/api/orders'),
+        Uri.parse('${ApiService.baseUrl}/orders'),
         headers: {
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
           'Authorization': 'Bearer $token',
         },
       );
 
       if (response.statusCode == 200) {
+        // ✅ حماية من استجابات HTML
+        if (!ApiService.isJsonResponse(response)) return;
         final data = json.decode(response.body);
         List orders = data['data'] ?? [];
         int lastCount = prefs.getInt('last_orders_count') ?? 0;
@@ -108,38 +110,6 @@ Future<void> _showLocalNotification(String title, String body) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ✅ إعدادات الفايربيس الذكية (للويب، الآيفون، والأندرويد)
-  if (kIsWeb) {
-    // إعدادات الويب
-    await Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: "AIzaSyD3oz1eKrRS077zCQTzee5QJ0Nlw02Orzo",
-        authDomain: "medical-lab-52086.firebaseapp.com",
-        projectId: "medical-lab-52086",
-        storageBucket: "medical-lab-52086.firebasestorage.app",
-        messagingSenderId: "731388772856",
-        appId: "1:731388772856:web:f3eb5b0ca87eec9095560d",
-        measurementId: "G-MS196W9Z1H",
-      ),
-    );
-  } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-    // ✅ إعدادات الآيفون والآيباد (تمت إضافة الكود مالتك هنا)
-    await Firebase.initializeApp(
-      options: const FirebaseOptions(
-        apiKey: "AIzaSyD3oz1eKrRS077zCQTzee5QJ0Nlw02Orzo",
-        authDomain: "medical-lab-52086.firebaseapp.com",
-        projectId: "medical-lab-52086",
-        storageBucket: "medical-lab-52086.firebasestorage.app",
-        messagingSenderId: "731388772856",
-        appId: "1:731388772856:ios:d433f64684c9e30d95560d", // الكود اللي جبته
-        iosBundleId: "com.example.medicalLabFlutter",
-      ),
-    );
-  } else {
-    // إعدادات الأندرويد (يعتمد على ملف google-services.json)
-    await Firebase.initializeApp();
-  }
-
   // ✅ إعدادات Workmanager (للإشعارات) تشتغل بس على الموبايل
   if (!kIsWeb) {
     try {
@@ -175,7 +145,6 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => UserProvider()),
         ChangeNotifierProvider(create: (_) => OrderProvider()),
-        ChangeNotifierProvider(create: (_) => InspectionProvider()),
         ChangeNotifierProvider(create: (_) => LabAppModel()),
       ],
       child: ScreenUtilInit(

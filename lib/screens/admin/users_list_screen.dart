@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:medical_lab_flutter/services/api_service.dart';
 
@@ -24,11 +23,18 @@ class _UsersListScreenState extends State<UsersListScreen> {
     try {
       final response = await _apiService.get('/users');
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          _users = data['data'];
-          _isLoading = false;
-        });
+        // ✅ استخدام safeJsonDecode
+        final data = ApiService.safeJsonDecode(response);
+        if (data != null && data['data'] != null) {
+          setState(() {
+            _users = data['data'];
+            _isLoading = false;
+          });
+        } else {
+          setState(() => _isLoading = false);
+        }
+      } else {
+        setState(() => _isLoading = false);
       }
     } catch (e) {
       setState(() => _isLoading = false);
@@ -54,10 +60,10 @@ class _UsersListScreenState extends State<UsersListScreen> {
                 return Card(
                   child: ListTile(
                     leading: const CircleAvatar(child: Icon(Icons.person)),
-                    title: Text(user['name'],
+                    title: Text(user['name'] ?? '',
                         style: const TextStyle(
                             fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
-                    subtitle: Text(user['email']),
+                    subtitle: Text(user['email'] ?? ''),
                     trailing: Text(user['phone'] ?? '',
                         style: const TextStyle(fontSize: 12)),
                   ),

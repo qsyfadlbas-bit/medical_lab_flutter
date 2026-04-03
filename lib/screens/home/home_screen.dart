@@ -100,8 +100,10 @@ class Order {
   factory Order.fromJson(Map<String, dynamic> json) {
     DateTime parseDate() {
       try {
-        if (json['createdAt'] != null) return DateTime.parse(json['createdAt']);
-        if (json['date'] != null) return DateTime.parse(json['date']);
+        if (json['createdAt'] != null)
+          return DateTime.parse(json['createdAt'].toString());
+        if (json['date'] != null)
+          return DateTime.parse(json['date'].toString());
         return DateTime.now();
       } catch (e) {
         return DateTime.now();
@@ -112,38 +114,74 @@ class Order {
       try {
         if (json['items'] == null) return [];
         return (json['items'] as List).map((item) {
+          // ✅ الحماية الكبرى: إذا كان الطلب قديماً والعنصر عبارة عن نص
+          if (item is String) {
+            return CartItem(
+              test: MedicalTest(
+                id: '',
+                nameAr: item,
+                nameEn: '',
+                code: '',
+                price: 0,
+                category: '',
+                descriptionAr: '',
+                descriptionEn: '',
+                keywords: [],
+              ),
+              quantity: 1,
+            );
+          }
+
+          // ✅ إذا كان الطلب جديداً والعنصر عبارة عن Map (صحيح)
+          if (item is Map) {
+            return CartItem(
+              test: MedicalTest(
+                id: item['testId']?.toString() ?? item['id']?.toString() ?? '',
+                nameAr: item['nameAr']?.toString() ??
+                    item['testName']?.toString() ??
+                    'تحليل',
+                nameEn: item['nameEn']?.toString() ?? '',
+                code: item['code']?.toString() ?? '',
+                price: int.tryParse(item['price']?.toString() ?? '0') ?? 0,
+                category: '',
+                descriptionAr: '',
+                descriptionEn: '',
+                keywords: [],
+              ),
+              quantity: int.tryParse(item['quantity']?.toString() ?? '1') ?? 1,
+            );
+          }
+
+          // احتياطي لأي حالة أخرى
           return CartItem(
-            test: MedicalTest(
-              id: item['testId'] ?? item['id'] ?? '',
-              nameAr: item['nameAr'] ?? '',
-              nameEn: item['testName'] ?? item['nameEn'] ?? 'تحليل',
-              code: item['code'] ?? '',
-              price: (item['price'] ?? 0).toInt(),
-              category: '',
-              descriptionAr: '',
-              descriptionEn: '',
-              keywords: [],
-            ),
-            quantity: item['quantity'] ?? 1,
-          );
+              test: MedicalTest(
+                  id: '',
+                  nameAr: 'تحليل غير معروف',
+                  nameEn: '',
+                  code: '',
+                  price: 0,
+                  category: '',
+                  descriptionAr: '',
+                  descriptionEn: '',
+                  keywords: []),
+              quantity: 1);
         }).toList();
       } catch (e) {
+        print("❌ Error parsing items: $e");
         return [];
       }
     }
 
     return Order(
-      id: json['id'] ?? json['_id'] ?? '',
-      orderNumber: json['orderNumber'] ?? 'N/A',
+      id: json['id']?.toString() ?? json['_id']?.toString() ?? '',
+      orderNumber: json['orderNumber']?.toString() ?? 'N/A',
       date: parseDate(),
       items: parseItems(),
-      totalAmount: json['totalAmount'] ?? 0,
-      status: json['status'] ?? 'PENDING',
-      paymentMethod: json['paymentMethod'] ?? 'cash',
-
-      // ✅ أضف هذين السطرين لقراءة البيانات من السيرفر:
-      patientName: json['patientName'] ?? '',
-      phone: json['phone'] ?? '',
+      totalAmount: num.tryParse(json['totalAmount']?.toString() ?? '0') ?? 0,
+      status: json['status']?.toString() ?? 'PENDING',
+      paymentMethod: json['paymentMethod']?.toString() ?? 'cash',
+      patientName: json['patientName']?.toString() ?? '',
+      phone: json['phone']?.toString() ?? '',
     );
   }
 }
@@ -261,8 +299,9 @@ class LabAppModel extends ChangeNotifier {
         'أخرى'
       ];
 
-  get _aiBaseUrl => null;
-  get _aiApiKey => null;
+  // =================================================================
+  // 🤖 قسم الذكاء الاصطناعي (المساعد الطبي)
+  // =================================================================
 
   void toggleLanguage() {
     _isArabic = !_isArabic;
@@ -300,8 +339,9 @@ class LabAppModel extends ChangeNotifier {
       final response = await _apiService.get('/tests');
 
       if (response.statusCode == 200) {
-        final body = json.decode(response.body);
-        final List<dynamic> data = body['data'];
+        final body = ApiService.safeJsonDecode(response);
+        if (body == null) return;
+        final List<dynamic> data = body['data'] ?? [];
 
         _allTests = data.map((json) {
           return MedicalTest(
@@ -328,7 +368,8 @@ class LabAppModel extends ChangeNotifier {
     try {
       final response = await _apiService.get('/auth/profile');
       if (response.statusCode == 200) {
-        final body = json.decode(response.body);
+        final body = ApiService.safeJsonDecode(response);
+        if (body == null) return;
         final data = body['data'];
         _userName = data['name'] ?? data['username'] ?? 'مستخدم';
         _userPhone = data['phone'] ?? '';
@@ -342,25 +383,22 @@ class LabAppModel extends ChangeNotifier {
     }
   }
 
+  // ✅ دالة جلب طلبات المستخدم (تم تنظيفها من الفلترة المحلية الخاطئة)
   Future<void> fetchMyOrders() async {
     try {
       final response = await _apiService.get('/orders');
-      if (response.statusCode == 200) {
-        final body = json.decode(response.body);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final body = ApiService.safeJsonDecode(response);
+        if (body == null) return;
         final List<dynamic> data = body['data'] ?? body;
-        final allOrders = data.map((json) => Order.fromJson(json)).toList();
 
-        // الفلترة حسب رقم الهاتف واسم المستخدم
-        _orders = allOrders.where((order) {
-          String orderPhone = order.phone.replaceAll(' ', '');
-          String myPhone = _userPhone.replaceAll(' ', '');
-          bool matchPhone = orderPhone == myPhone && myPhone.isNotEmpty;
-          bool matchName =
-              order.patientName == _userName && _userName.isNotEmpty;
-          return matchPhone || matchName;
-        }).toList();
+        // 🚀 نأخذ الطلبات من السيرفر مباشرة (السيرفر يرسل طلبات هذا المريض فقط)
+        _orders = data.map((json) => Order.fromJson(json)).toList();
 
+        // ترتيب الطلبات من الأحدث للأقدم
         _orders.sort((a, b) => b.date.compareTo(a.date));
+
         notifyListeners();
       }
     } catch (e) {
@@ -483,6 +521,16 @@ class LabAppModel extends ChangeNotifier {
         0, (sum, item) => sum + (item.test.price * item.quantity));
   }
 
+  // ✅ 2. دالة بدء المحادثة
+
+  // =================================================================
+  // 🤖 قسم الذكاء الاصطناعي (المساعد الطبي) - النسخة الناجحة 100%
+  // =================================================================
+
+  // ✅ 1. المفتاح الذي عمل معك بنجاح في الـ PHP
+  final String _aiApiKey = 'AIzaSyCXwdL1mZuOOOPooDAXOiA9aPmI39B8yr4';
+  final String _aiModel = 'gemini-flash-latest'; // الموديل الناجح
+
   void askAIAssistant(String question) async {
     _chatMessages.add(
         ChatMessage(text: question, isUser: true, timestamp: DateTime.now()));
@@ -507,18 +555,89 @@ class LabAppModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ✅ 3. الاتصال الحقيقي بالذكاء الاصطناعي (بنفس طريقة الـ PHP)
   Future<Map<String, dynamic>> _getRealAIResponse(String question) async {
-    return await _callOpenAI(question);
+    String normalTests = _allTests
+        .where((t) => t.category != 'عروض')
+        .map((t) => "${t.nameAr} (Code: ${t.code})")
+        .join(" | ");
+    String offers = _allTests
+        .where((t) => t.category == 'عروض')
+        .map((t) => "${t.nameAr} (Code: ${t.code})")
+        .join(" | ");
+
+    if (normalTests.isEmpty) normalTests = "لا توجد تحاليل";
+    if (offers.isEmpty) offers = "لا توجد عروض";
+
+    String prompt = """
+    أنت دكتور طبي لطيف تعمل في مختبر القمة للتحليلات.
+    رد على المريض بلغة بسيطة واقترح التحاليل المناسبة بناءً على الأعراض.
+    التحاليل المتاحة: [$normalTests]. الباقات: [$offers].
+    يجب أن يكون الرد بصيغة JSON فقط بهذا الشكل:
+    {"response": "نص الرد هنا", "suggestedTests": ["CODE1", "CODE2"]}
+    سؤال المريض: $question
+    """;
+
+    // الرابط الصافي كما جربته
+    final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/$_aiModel:generateContent');
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': _aiApiKey, // 🔥 المفتاح الناجح يوضع هنا
+        },
+        body: json.encode({
+          "contents": [
+            {
+              "parts": [
+                {"text": prompt}
+              ]
+            }
+          ],
+          "generationConfig": {"responseMimeType": "application/json"}
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = ApiService.safeJsonDecode(response);
+        if (data == null) throw Exception('استجابة غير صالحة من API');
+        String textResponse =
+            data['candidates'][0]['content']['parts'][0]['text'];
+
+        textResponse =
+            textResponse.replaceAll('```json', '').replaceAll('```', '').trim();
+
+        Map<String, dynamic> jsonResponse = {};
+        try {
+          jsonResponse = json.decode(textResponse) as Map<String, dynamic>;
+        } catch (_) {
+          throw Exception('فشل تحليل رد الذكاء الاصطناعي');
+        }
+        List<dynamic> rawTests = jsonResponse['suggestedTests'] ?? [];
+        return {
+          'response':
+              jsonResponse['response'] ?? 'عذراً، لم أتمكن من فهم الحالة.',
+          'suggestedTests': rawTests.map((e) => e.toString()).toList()
+        };
+      } else {
+        print("❌ Google API Error: ${response.body}");
+        throw Exception('API Error: ${response.statusCode}');
+      }
+    } catch (e) {
+      print("❌ Error Exception: $e");
+      throw Exception('فشل الاتصال');
+    }
   }
 
-  Future<Map<String, dynamic>> _callOpenAI(String question) async {
-    throw Exception('Not Implemented');
-  }
-
+  // ✅ 4. الرد المحلي الاحتياطي
   Map<String, dynamic> _generateLocalResponse(String question) {
     return {
-      'response': 'نصحك بزيارة الطبيب',
-      'suggestedTests': ['CBC001']
+      'response':
+          'عذراً، يبدو أن هناك مشكلة في الاتصال. يرجى التحقق من الإنترنت أو المحاولة مرة أخرى لاحقاً.',
+      'suggestedTests': <String>[]
     };
   }
 
@@ -1342,7 +1461,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _startNotificationCheck() {
     _notificationTimer =
-        Timer.periodic(const Duration(seconds: 10), (timer) async {
+        Timer.periodic(const Duration(seconds: 30), (timer) async {
       final appModel = Provider.of<LabAppModel>(context, listen: false);
 
       // 1. إذا كانت الإشعارات مغلقة، لا تفعل شيئاً
@@ -1665,8 +1784,8 @@ class _HomeScreenState extends State<HomeScreen>
                 children: [
                   _buildStatItem(
                     icon: Icons.medical_services,
-                    value: '12',
-                    label: 'فحص متوفر',
+                    value: 'فحص',
+                    label: ' متوفر',
                     color: LabTheme.primaryColor,
                   ),
                   _buildStatItem(
@@ -3244,19 +3363,6 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             child: Stack(
               children: [
-                Positioned.fill(
-                  child: Opacity(
-                    opacity: 0.03,
-                    child: Container(
-                      decoration: const BoxDecoration(
-                        image: DecorationImage(
-                          image: AssetImage('assets/pattern.png'),
-                          repeat: ImageRepeat.repeat,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
                 appModel._chatMessages
                         .isEmpty // تأكد من استخدام chatMessages وليس _chatMessages
                     ? _buildCreativeEmptyChat(isDark)
