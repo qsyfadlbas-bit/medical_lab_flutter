@@ -241,7 +241,7 @@ class _SplashScreenState extends State<SplashScreen>
       );
     } else if (role == 'USER') {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const ResponsiveHomeScreen()),
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
       );
     } else {
       Navigator.of(context).pushReplacement(

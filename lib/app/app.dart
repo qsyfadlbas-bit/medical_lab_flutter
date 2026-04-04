@@ -59,7 +59,7 @@ class _AppState extends State<App> {
       return const AdminDashboard();
     } else {
       // ✅ الإصلاح: استخدام ResponsiveHomeScreen بدل HomeScreen
-      return const ResponsiveHomeScreen();
+      return const HomeScreen();
     }
   }
 }

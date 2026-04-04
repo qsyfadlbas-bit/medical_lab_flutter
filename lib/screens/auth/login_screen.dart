@@ -85,8 +85,7 @@ class _LoginScreenState extends State<LoginScreen> {
             // لأن ResponsiveHomeScreen تتعامل مع أحجام الشاشات المختلفة
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(
-                  builder: (context) => const ResponsiveHomeScreen()),
+              MaterialPageRoute(builder: (context) => const HomeScreen()),
               (route) => false,
             );
           }

@@ -173,8 +173,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             // لتوحيد سلوك التنقل مع شاشة تسجيل الدخول
             Navigator.pushAndRemoveUntil(
               context,
-              MaterialPageRoute(
-                  builder: (context) => const ResponsiveHomeScreen()),
+              MaterialPageRoute(builder: (context) => const HomeScreen()),
               (route) => false,
             );
           }
