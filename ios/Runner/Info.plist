@@ -50,5 +50,10 @@
     <string>نحتاج للوصول إلى مكتبة الصور لتمكينك من رفع صور التحاليل الطبية أو اختيار صورة لملفك الشخصي.</string>
     <key>NSCameraUsageDescription</key>
     <string>نحتاج للوصول إلى الكاميرا لالتقاط صور للتحاليل الطبية.</string>
+    
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>نحتاج إلى معرفة موقعك لعرض أقرب فروع المختبر إليك وتسهيل وصولك إلينا.</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>نحتاج إلى معرفة موقعك لعرض أقرب فروع المختبر إليك وتسهيل وصولك إلينا.</string>
 </dict>
 </plist>
