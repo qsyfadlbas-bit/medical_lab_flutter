@@ -353,7 +353,7 @@ class _SplashScreenState extends State<SplashScreen>
 
               const SizedBox(height: 50),
 
-              // مؤشر التحميل
+              // update
               const CircularProgressIndicator(
                 valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 strokeWidth: 3,
