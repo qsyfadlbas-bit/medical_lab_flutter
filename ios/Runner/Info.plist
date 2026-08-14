@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>يحتاج تطبيق مختبر القمة للوصول إلى موقعك لعرض أقرب الفروع إليك وتسهيل تقديم الخدمات الطبية.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>يحتاج تطبيق مختبر القمة للوصول إلى موقعك لعرض أقرب الفروع إليك وتسهيل تقديم الخدمات الطبية.</string>
 </dict>
 </plist>
