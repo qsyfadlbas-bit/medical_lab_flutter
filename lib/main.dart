@@ -11,7 +11,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
-// استيراد الشاشات والبروفايدرز
+// hi pro
 import 'package:medical_lab_flutter/app/theme.dart';
 import 'package:medical_lab_flutter/providers/auth_provider.dart';
 import 'package:medical_lab_flutter/providers/user_provider.dart';
@@ -353,7 +353,7 @@ class _SplashScreenState extends State<SplashScreen>
 
               const SizedBox(height: 50),
 
-              // update
+              // update ب
               const CircularProgressIndicator(
                 valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                 strokeWidth: 3,
