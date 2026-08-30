@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'package:medical_lab_flutter/providers/auth_provider.dart';
 import 'package:medical_lab_flutter/widgets/common/gradient_button.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart'; // ✅ أضفنا استيراد الروابط
 
 import 'package:medical_lab_flutter/screens/home/home_screen.dart';
@@ -29,8 +28,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isGettingLocation = false;
   bool _isLocalLoading = false;
 
-  // ✅ متغير الموافقة على الشروط
-  bool _agreedToTerms = false;
+  // ✅ متغير الموافقة على الشروط — مؤشّر افتراضياً، والمستخدم يكدر يشيله
+  bool _agreedToTerms = true;
+
+  // ✅ صحيح لمن الحقل ماسك إحداثيات — يخلي اتجاه النص LTR حتى
+  //    ما ينعكس ترتيب الرقمين بواجهة عربية (RTL)
+  bool _addressIsCoords = false;
 
   @override
   void dispose() {
@@ -69,6 +72,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       LocationPermission permission;
 
       serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      // ✅ فحص mounted بعد كل await — نافذة إذن الموقع بالآيفون تاخذ
+      //    ثواني، ولو اللاعب طلع من الشاشة بينها يصير انهيار
+      if (!mounted) return;
       if (!serviceEnabled) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('يرجى تفعيل خدمة الموقع (GPS)',
@@ -78,8 +84,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
 
       permission = await Geolocator.checkPermission();
+      if (!mounted) return;
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
+        if (!mounted) return;
         if (permission == LocationPermission.denied) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('تم رفض إذن الموقع',
@@ -100,35 +108,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
       Position position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high);
 
-      try {
-        List<Placemark> placemarks = await placemarkFromCoordinates(
-            position.latitude, position.longitude);
-        if (placemarks.isNotEmpty) {
-          Placemark place = placemarks[0];
-          String fullAddress =
-              "${place.administrativeArea ?? ''} - ${place.locality ?? ''} - ${place.street ?? ''}";
+      if (!mounted) return;
 
-          setState(() {
-            _addressController.text = fullAddress;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('تم تحديد الموقع بنجاح',
-                  style: TextStyle(fontFamily: 'Cairo')),
-              backgroundColor: Colors.green));
-        }
-      } catch (e) {
-        setState(() {
-          _addressController.text =
-              "${position.latitude}, ${position.longitude}";
-        });
-      }
+      // ✅ إحداثيات رقمية مباشرة بدل ترجمتها لاسم عنوان.
+      //    الترجمة النصية (placemarkFromCoordinates) كانت ترجع كلام
+      //    ناقص بالعراق ("محافظة البصرة - - ") وتختلف بين الآيفون
+      //    والأندرويد. الأرقام دقيقة وتنلصق بخرائط جوجل مباشرة.
+      //    6 خانات عشرية ≈ دقة 11 سم، أكثر من كافي.
+      final coords = "${position.latitude.toStringAsFixed(6)}"
+          ", ${position.longitude.toStringAsFixed(6)}";
+
+      setState(() {
+        _addressController.text = coords;
+        _addressIsCoords = true;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تم تحديد الموقع بنجاح',
+              style: TextStyle(fontFamily: 'Cairo')),
+          backgroundColor: Colors.green));
     } catch (e) {
       print("Location Error: $e");
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content:
               Text('فشل تحديد الموقع', style: TextStyle(fontFamily: 'Cairo'))));
     } finally {
-      setState(() => _isGettingLocation = false);
+      if (mounted) setState(() => _isGettingLocation = false);
     }
   }
 
@@ -287,6 +293,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 // حقل العنوان والموقع
                 TextFormField(
                   controller: _addressController,
+                  // ✅ لمن يمسك إحداثيات نخليه LTR — بواجهة عربية الرقمين
+                  //    ينعكس ترتيبهم ويصير خط العرض بمكان خط الطول
+                  textDirection: _addressIsCoords ? TextDirection.ltr : null,
+                  textAlign:
+                      _addressIsCoords ? TextAlign.left : TextAlign.start,
+                  // أول ما يكتب بإيده نرجّع الاتجاه للعربي
+                  onChanged: (_) {
+                    if (_addressIsCoords) {
+                      setState(() => _addressIsCoords = false);
+                    }
+                  },
                   decoration: InputDecoration(
                     labelText: 'العنوان',
                     prefixIcon: const Icon(Icons.location_on),
@@ -304,7 +321,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12)),
                     helperText:
-                        'اضغط على الأيقونة الزرقاء لتحديد موقعك تلقائياً',
+                        'اضغط على الأيقونة الزرقاء لتحديد إحداثيات موقعك',
                     helperStyle:
                         const TextStyle(fontFamily: 'Cairo', fontSize: 11),
                   ),

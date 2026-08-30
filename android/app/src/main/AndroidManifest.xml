@@ -13,7 +13,7 @@
         tools:node="remove" />
 
     <application
-        android:label="مختبر القمة للتحليلات المرضية"
+        android:label="مختبر قمة  "
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity

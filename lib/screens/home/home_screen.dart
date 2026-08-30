@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:medical_lab_flutter/services/api_service.dart';
 import 'package:medical_lab_flutter/services/ai_service.dart';
+import 'package:medical_lab_flutter/utils/validators.dart';
 
 // ----------------------
 // 1. الموديل (المنطق)
@@ -521,6 +522,41 @@ class LabAppModel extends ChangeNotifier {
     }
   }
 
+  // ✅ تغيير كلمة المرور (قسم الخصوصية والأمان)
+  // ترجع null عند النجاح، أو نص رسالة الخطأ عند الفشل — نفس نمط deleteAccount
+  Future<String?> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final response = await _apiService.post('/auth/change-password', {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      });
+      final body = ApiService.safeJsonDecode(response);
+
+      if (response.statusCode == 200 &&
+          body != null &&
+          body['success'] == true) {
+        return null; // نجاح
+      }
+
+      // ✅ فشل صريح مو صامت: لو المسار أصلاً مو موجود بالسيرفر نكولها
+      //    بالوضوح بدل رسالة عامة تخلي التشخيص تخمين
+      if (response.statusCode == 404) {
+        return 'مسار تغيير كلمة المرور غير موجود على السيرفر '
+            '(POST /auth/change-password). راجع الباك إند.';
+      }
+
+      if (body != null && body['error'] != null) {
+        return body['error'].toString();
+      }
+      return ApiService.getErrorMessage(response);
+    } catch (e) {
+      return 'خطأ في الاتصال بالسيرفر. تحقق من الإنترنت وحاول مرة أخرى.';
+    }
+  }
+
   void addToCart(MedicalTest test) {
     final index = _cart.indexWhere((item) => item.test.id == test.id);
     if (index >= 0) {
@@ -922,6 +958,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
               isDark: isDark,
               onTap: () {
                 _showEditProfileDialog(context, appModel);
+              },
+            ),
+
+            const SizedBox(height: 25),
+
+            // 3. الخصوصية والأمان
+            const Text(
+              "الخصوصية والأمان",
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+                fontFamily: 'Cairo',
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // ✅ تغيير كلمة المرور
+            _buildSettingsTile(
+              icon: Icons.lock_reset,
+              color: LabTheme.primaryColor,
+              title: "تغيير كلمة المرور",
+              subtitle: "تحديث كلمة مرور حسابك",
+              isDark: isDark,
+              onTap: () {
+                _showChangePasswordDialog(context, appModel);
               },
             ),
 
@@ -1357,6 +1419,203 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ✅ نافذة تغيير كلمة المرور (قسم الخصوصية والأمان)
+  void _showChangePasswordDialog(BuildContext context, LabAppModel appModel) {
+    final currentController = TextEditingController();
+    final newController = TextEditingController();
+    final confirmController = TextEditingController();
+    bool isSaving = false;
+    bool showCurrent = false;
+    bool showNew = false;
+    bool showConfirm = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          // حقل كلمة مرور بزر إظهار/إخفاء — نفس الشكل للحقول الثلاثة
+          Widget passwordField({
+            required TextEditingController controller,
+            required String label,
+            required bool visible,
+            required VoidCallback onToggle,
+          }) {
+            return TextField(
+              controller: controller,
+              obscureText: !visible,
+              enabled: !isSaving,
+              style: const TextStyle(fontFamily: 'Cairo'),
+              decoration: InputDecoration(
+                labelText: label,
+                labelStyle: const TextStyle(fontFamily: 'Cairo'),
+                prefixIcon: const Icon(Icons.lock_outline),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                      visible ? Icons.visibility_off : Icons.visibility,
+                      size: 20),
+                  onPressed: isSaving ? null : onToggle,
+                ),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            );
+          }
+
+          // إظهار رسالة تنبيه موحّدة
+          void warn(String message) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(message,
+                    style: const TextStyle(fontFamily: 'Cairo')),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+
+          return AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            title: const Row(
+              children: [
+                Icon(Icons.lock_reset, color: LabTheme.primaryColor, size: 26),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text("تغيير كلمة المرور",
+                      style: TextStyle(fontFamily: 'Cairo', fontSize: 18)),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  passwordField(
+                    controller: currentController,
+                    label: 'كلمة المرور الحالية',
+                    visible: showCurrent,
+                    onToggle: () =>
+                        setDialogState(() => showCurrent = !showCurrent),
+                  ),
+                  const SizedBox(height: 12),
+                  passwordField(
+                    controller: newController,
+                    label: 'كلمة المرور الجديدة',
+                    visible: showNew,
+                    onToggle: () => setDialogState(() => showNew = !showNew),
+                  ),
+                  const SizedBox(height: 12),
+                  passwordField(
+                    controller: confirmController,
+                    label: 'تأكيد كلمة المرور الجديدة',
+                    visible: showConfirm,
+                    onToggle: () =>
+                        setDialogState(() => showConfirm = !showConfirm),
+                  ),
+                  const SizedBox(height: 10),
+                  const Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      'كلمة المرور يجب أن تكون 6 أحرف على الأقل',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 11,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: isSaving ? null : () => Navigator.pop(ctx),
+                child: const Text("إلغاء",
+                    style: TextStyle(fontFamily: 'Cairo', color: Colors.grey)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: LabTheme.primaryColor),
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        final current = currentController.text;
+                        final newPass = newController.text;
+                        final confirm = confirmController.text;
+
+                        if (current.isEmpty) {
+                          warn('أدخل كلمة المرور الحالية');
+                          return;
+                        }
+
+                        // ✅ نفس قاعدة الخادم بالضبط (Validators.password)
+                        //    حتى ما تنرفض من السيرفر بعد ما ننتظر الرد
+                        final passError = Validators.password(newPass);
+                        if (passError != null) {
+                          warn(passError);
+                          return;
+                        }
+
+                        final confirmError =
+                            Validators.confirmPassword(confirm, newPass);
+                        if (confirmError != null) {
+                          warn(confirmError);
+                          return;
+                        }
+
+                        if (newPass == current) {
+                          warn('كلمة المرور الجديدة مطابقة للحالية');
+                          return;
+                        }
+
+                        setDialogState(() => isSaving = true);
+                        final error = await appModel.changePassword(
+                          currentPassword: current,
+                          newPassword: newPass,
+                        );
+
+                        if (!ctx.mounted) return;
+
+                        if (error == null) {
+                          Navigator.pop(ctx);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('تم تغيير كلمة المرور بنجاح ✅',
+                                    style: TextStyle(fontFamily: 'Cairo')),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          }
+                        } else {
+                          setDialogState(() => isSaving = false);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(error,
+                                  style: const TextStyle(fontFamily: 'Cairo')),
+                              backgroundColor: Colors.red,
+                              duration: const Duration(seconds: 5),
+                            ),
+                          );
+                        }
+                      },
+                child: isSaving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Text("حفظ",
+                        style: TextStyle(
+                            fontFamily: 'Cairo', color: Colors.white)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   // ✅ نافذة تأكيد حذف الحساب (خطوتان: تحذير ثم كلمة المرور)
   void _showDeleteAccountDialog(BuildContext context, LabAppModel appModel) {
     final passwordController = TextEditingController();
@@ -1713,7 +1972,8 @@ class _HomeScreenState extends State<HomeScreen>
   final ScrollController _chatScrollController = ScrollController();
   int _currentIndex = 0;
   late AnimationController _animationController;
-  late Animation<double> _scaleAnimation;
+  // ✅ أنيميشن تلاشي لشبكة الفحوصات فقط (مو للشاشة كلها)
+  late Animation<double> _gridFadeAnimation;
 
   // ✅ متغيرات نظام التنبيهات
   Timer? _notificationTimer;
@@ -1727,9 +1987,9 @@ class _HomeScreenState extends State<HomeScreen>
     });
 
     _animationController = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 500));
-    _scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
-        CurvedAnimation(parent: _animationController, curve: Curves.easeInOut));
+        vsync: this, duration: const Duration(milliseconds: 260));
+    _gridFadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+        CurvedAnimation(parent: _animationController, curve: Curves.easeOut));
     _animationController.forward();
 
     // ✅ تشغيل المؤقت للتحقق من تحديثات الطلبات كل 10 ثواني
@@ -1824,26 +2084,18 @@ class _HomeScreenState extends State<HomeScreen>
       const ProfileScreen(),
     ];
 
-    return AnimatedBuilder(
-      animation: _scaleAnimation,
-      builder: (context, child) {
-        return Transform.scale(
-          scale: _scaleAnimation.value,
-          child: Scaffold(
-            backgroundColor: LabTheme.lightBackground,
-            appBar: (_currentIndex == 2 || _currentIndex == 3)
-                ? null
-                : _buildCreativeAppBar(appModel, screenWidth),
-            body:
-                _currentIndex < pages.length ? pages[_currentIndex] : pages[0],
-            bottomNavigationBar:
-                _buildCreativeBottomNavigationBar(appModel, isDark),
-            floatingActionButton: _buildFloatingActionButton(appModel, isDark),
-            floatingActionButtonLocation:
-                FloatingActionButtonLocation.centerDocked,
-          ),
-        );
-      },
+    // ✅ الـ Scaffold ثابت — ماكو Transform.scale حوله.
+    // الترانسفورم القديم كان يكمّش الشاشة كلها لـ 95% بكل ضغطة على تصنيف.
+    // الأنيميشن انتقل لشبكة الفحوصات لوحدها (شوف _buildCreativeServicesScreen).
+    return Scaffold(
+      backgroundColor: LabTheme.lightBackground,
+      appBar: (_currentIndex == 2 || _currentIndex == 3)
+          ? null
+          : _buildCreativeAppBar(appModel, screenWidth),
+      body: _currentIndex < pages.length ? pages[_currentIndex] : pages[0],
+      bottomNavigationBar: _buildCreativeBottomNavigationBar(appModel, isDark),
+      floatingActionButton: _buildFloatingActionButton(appModel, isDark),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
     );
   }
 
@@ -1990,14 +2242,14 @@ class _HomeScreenState extends State<HomeScreen>
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-        // ✅ 1. السلايدر المتحرك الجديد (تم تمرير دالة النافذة المنبثقة له)
+        // ✅ 1. البانر المثبّت فوق — ثابت ما يتحرك (عرض يوم الجمعة)
         SliverToBoxAdapter(
-          child: _PromoCarousel(
+          child: _PinnedPromoBanners(
             onOfferTap: (test) => _showOfferDetails(context, test, appModel),
           ),
         ),
 
-        // قسم العروض
+        // ✅ 2. قسم العروض الحصرية — وجواه السلايدر المتحرك
         _buildOffersSection(isDark, appModel),
 
         // تصفح الفحوصات (التصنيفات)
@@ -2028,6 +2280,9 @@ class _HomeScreenState extends State<HomeScreen>
                         padding: const EdgeInsets.only(right: 12),
                         child: InkWell(
                           onTap: () {
+                            // ✅ لو نفس التصنيف المختار، ما نعيد الأنيميشن
+                            //    حتى ما تصير رفّة بلا فائدة
+                            if (isSelected) return;
                             appModel.setCategory(category);
                             _animationController.reset();
                             _animationController.forward();
@@ -2091,26 +2346,30 @@ class _HomeScreenState extends State<HomeScreen>
         ),
 
         // شبكة الفحوصات
+        // ✅ التلاشي محصور بالشبكة فقط — ما يمس الـ AppBar ولا شريط التنقل
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          sliver: SliverGrid(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 15,
-              mainAxisSpacing: 15,
-              childAspectRatio: 0.9,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final test = appModel.filteredTests[index];
-                final cartItem = appModel.cart.firstWhere(
-                  (item) => item.test.id == test.id,
-                  orElse: () => CartItem(test: test, quantity: 0),
-                );
+          sliver: SliverFadeTransition(
+            opacity: _gridFadeAnimation,
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 15,
+                mainAxisSpacing: 15,
+                childAspectRatio: 0.9,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final test = appModel.filteredTests[index];
+                  final cartItem = appModel.cart.firstWhere(
+                    (item) => item.test.id == test.id,
+                    orElse: () => CartItem(test: test, quantity: 0),
+                  );
 
-                return _buildCreativeTestCard(test, cartItem, appModel);
-              },
-              childCount: appModel.filteredTests.length,
+                  return _buildCreativeTestCard(test, cartItem, appModel);
+                },
+                childCount: appModel.filteredTests.length,
+              ),
             ),
           ),
         ),
@@ -2123,32 +2382,8 @@ class _HomeScreenState extends State<HomeScreen>
   // ✅ دالة بناء قسم العروض (تمت إضافة عرض العائلة)
   // ✅ دالة بناء قسم العروض (تم تعديل اسم الفحص الشامل)
   Widget _buildOffersSection(bool isDark, LabAppModel appModel) {
-    // 1. تعريف العرض الأول (الفحص الدوري + فيتامين D)
-    final offer1 = MedicalTest(
-      id: 'offer_1',
-      nameAr: 'الفحص الدوري + فيتامين D مجاني 🎁', // ✅ تم تعديل الاسم هنا
-      nameEn: 'Periodic Checkup + Free Vit D',
-      code: 'OFF01',
-      price: 25000,
-      category: 'عروض',
-      descriptionAr: 'تحليل دم + سكر + وظائف كلى + كبد',
-      descriptionEn: 'CBC + Sugar + Kidney + Liver',
-      keywords: [],
-    );
-
-    // 2. تعريف عرض العائلة 👨‍👩‍👧‍👦
-    final familyOffer = MedicalTest(
-      id: 'offer_family',
-      nameAr: 'فحص العائلة المخفّض',
-      nameEn: 'Family Discount Package',
-      code: 'FAM01',
-      price: 25000, // سعر الشخص الواحد
-      category: 'عروض',
-      descriptionAr: 'كل 3 أشخاص = الرابع مجاني 🎁',
-      descriptionEn: 'Buy 3 Get 1 Free',
-      keywords: [],
-    );
-
+    // ✅ كل العروض والباقات صارت بقائمة وحدة (_kLabOffers) تحت بآخر الملف —
+    //    الكارتات تنبني منها مباشرة، ماكو سلايدر متحرك بعد
     return SliverToBoxAdapter(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2173,31 +2408,25 @@ class _HomeScreenState extends State<HomeScreen>
           ),
           SizedBox(
             height: 240,
-            child: ListView(
+            child: ListView.builder(
               physics: const BouncingScrollPhysics(),
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 15),
-              children: [
-                // كارت عرض العائلة
-                _buildOfferCard(
-                  test: familyOffer,
-                  oldPrice: "",
-                  color1: const Color(0xFF0D9488),
-                  color2: const Color(0xFF2DD4BF),
-                  icon: Icons.family_restroom,
+              itemCount: _kLabOffers.length,
+              itemBuilder: (context, index) {
+                final offer = _kLabOffers[index];
+                // ✅ التدرّج ياخذه من البالتة الخضراء بالدور —
+                //    كل الكارتات تبقى بعائلة لون وحدة
+                final green = _kOfferGreens[index % _kOfferGreens.length];
+                return _buildOfferCard(
+                  test: offer.test,
+                  oldPrice: offer.oldPrice,
+                  color1: green[0],
+                  color2: green[1],
+                  icon: offer.icon,
                   appModel: appModel,
-                ),
-
-                // كارت الفحص الدوري (المعدل)
-                _buildOfferCard(
-                  test: offer1,
-                  oldPrice: "35,000",
-                  color1: const Color(0xFF065F46),
-                  color2: const Color(0xFF10B981),
-                  icon: Icons.biotech,
-                  appModel: appModel,
-                ),
-              ],
+                );
+              },
             ),
           ),
         ],
@@ -2275,8 +2504,13 @@ class _HomeScreenState extends State<HomeScreen>
                   const Spacer(),
                   Text(
                     test.nameAr,
+                    // ✅ سقف سطرين — أسماء الباقات الجديدة أطول من العرضين
+                    //    القدام، وبلا هالسقف الكارت يفيض
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      fontSize: 22,
+                      fontSize: 19,
+                      height: 1.25,
                       fontWeight: FontWeight.bold,
                       color: Colors.white,
                       fontFamily: 'Cairo',
@@ -2307,15 +2541,18 @@ class _HomeScreenState extends State<HomeScreen>
                               color: Colors.white,
                             ),
                           ),
-                          Text(
-                            '$oldPrice د.ع',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.white70,
-                              decoration: TextDecoration.lineThrough,
-                              decorationColor: Colors.white70,
+                          // ✅ السعر القديم يبيّن بس إذا موجود فعلاً —
+                          //    قبل كان يطبع "د.ع" مشطوبة لحالها لمن يكون فارغ
+                          if (oldPrice.isNotEmpty)
+                            Text(
+                              '$oldPrice د.ع',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.white70,
+                                decoration: TextDecoration.lineThrough,
+                                decorationColor: Colors.white70,
+                              ),
                             ),
-                          ),
                         ],
                       ),
                       // زر إضافة سريع
@@ -3553,34 +3790,41 @@ class _HomeScreenState extends State<HomeScreen>
     return Column(
       children: [
         Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: isDark
-                  ? LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withOpacity(0.3),
-                      ],
-                    )
-                  : null,
-              color: isDark ? Colors.transparent : Colors.white,
-            ),
-            child: Stack(
-              children: [
-                appModel._chatMessages
-                        .isEmpty // تأكد من استخدام chatMessages وليس _chatMessages
-                    ? _buildCreativeEmptyChat(appModel, isDark)
-                    : _buildCreativeChatList(appModel, isDark),
-                if (appModel.isAiThinking)
-                  Positioned(
-                    bottom: 20,
-                    left: 0,
-                    right: 0,
-                    child: _buildThinkingIndicator(),
-                  ),
-              ],
+          // ✅ ضغطة على أي مكان فاضي بمنطقة الدردشة تنزّل لوحة المفاتيح.
+          //    opaque حتى الضغطة تنمسك حتى بالمساحات الفارغة، والأزرار
+          //    والحقول اللي جوه تاخذ الضغطة قبله فتشتغل عادي
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => FocusScope.of(context).unfocus(),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: isDark
+                    ? LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withOpacity(0.3),
+                        ],
+                      )
+                    : null,
+                color: isDark ? Colors.transparent : Colors.white,
+              ),
+              child: Stack(
+                children: [
+                  appModel._chatMessages
+                          .isEmpty // تأكد من استخدام chatMessages وليس _chatMessages
+                      ? _buildCreativeEmptyChat(appModel, isDark)
+                      : _buildCreativeChatList(appModel, isDark),
+                  if (appModel.isAiThinking)
+                    Positioned(
+                      bottom: 20,
+                      left: 0,
+                      right: 0,
+                      child: _buildThinkingIndicator(),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -8630,509 +8874,465 @@ class ResponsiveHomeScreen extends StatelessWidget {
 // تأكد من تحديث الروابط في الشريط الجانبي والشاشات الأخرى
 // لتشير إلى الشاشات الجديدة (DesktopCartScreen, DesktopPaymentScreen, etc.)
 
-// ------------------------------------------------------
-// ✅ ويدجت السلايدر المتحرك للعروض (Promo Carousel)
-// ------------------------------------------------------
-// ------------------------------------------------------
-// ✅ ويدجت السلايدر المتحرك للعروض (النسخة الجديدة)
-// ------------------------------------------------------
-// ------------------------------------------------------
-// ✅ ويدجت السلايدر المتحرك للعروض (تم تطبيق الأسعار التسويقية)
-// ------------------------------------------------------
-class _PromoCarousel extends StatefulWidget {
-  final Function(MedicalTest) onOfferTap;
-  const _PromoCarousel({required this.onOfferTap});
+// ------------------------------------------------------------------------
+// ✅ العروض المثبّتة فوق (ثابتة، ما تتحرك)
+//    حالياً عرض يوم الجمعة بس. لإضافة عرض ثاني فوق: زيد عنصر بهالقائمة
+//    وبس — الويدجت تبني البانر لحالها بنفس الستايل.
+// ------------------------------------------------------------------------
+final List<Map<String, dynamic>> _kPinnedPromos = [
+  {
+    "test": MedicalTest(
+        id: 'promo_friday',
+        nameAr: 'عرض يوم الجمعة!',
+        nameEn: 'Friday Offer',
+        code: 'FRI50',
+        price: 0,
+        category: 'عروض',
+        descriptionAr: 'تخفيض 50% على كافة التحاليل',
+        descriptionEn: '50% off all tests',
+        keywords: []),
+    "discount": "50%",
+    "icon": Icons.local_fire_department,
+    "color": Colors.amber,
+  },
+];
 
-  @override
-  State<_PromoCarousel> createState() => _PromoCarouselState();
+// ------------------------------------------------------------------------
+// ✅ باقات وعروض المختبر — تنعرض كلها كارتات بصف "عروض المختبر الحصرية"
+//    لإضافة باقة جديدة: زيد عنصر بالقائمة تحت وبس، الكارت ينبني لحاله
+// ------------------------------------------------------------------------
+class _LabOffer {
+  final MedicalTest test;
+  final IconData icon;
+  final String oldPrice; // فاضي = ما يبيّن سعر قديم مشطوب
+
+  const _LabOffer({
+    required this.test,
+    required this.icon,
+    this.oldPrice = '',
+  });
 }
 
-class _PromoCarouselState extends State<_PromoCarousel> {
-  late PageController _pageController;
-  int _currentPage = 0;
+// ✅ بالتة تدرّجات خضراء — الكارتات تاخذ تدرّجها من هنا حسب ترتيبها،
+//    فأي عرض جديد يجي أخضر تلقائياً وما ينكسر الانسجام اللوني.
+//    كل عنصر: [بداية التدرّج، نهايته] — والنهاية هي لون زر الإضافة كمان
+const List<List<Color>> _kOfferGreens = [
+  [Color(0xFF0D9488), Color(0xFF2DD4BF)], // تركوازي
+  [Color(0xFF065F46), Color(0xFF10B981)], // زمردي
+  [Color(0xFF14532D), Color(0xFF22C55E)], // أخضر كلاسيكي
+  [Color(0xFF115E59), Color(0xFF14B8A6)], // تيل غامق
+  [Color(0xFF166534), Color(0xFF4ADE80)], // أخضر فاتح
+  [Color(0xFF022C22), Color(0xFF059669)], // زمردي غامق
+  [Color(0xFF3F6212), Color(0xFF84CC16)], // أخضر ليموني
+  [Color(0xFF047857), Color(0xFF34D399)], // زمردي متوسط
+  [Color(0xFF052E16), Color(0xFF16A34A)], // أخضر غابة
+];
 
-  // ✅ القائمة الشاملة لجميع العروض والباقات
-  final List<Map<String, dynamic>> _slides = [
-    // --- العروض القديمة الأساسية ---
-    {
-      "test": MedicalTest(
-          id: 'promo_friday',
-          nameAr: 'عرض يوم الجمعة!',
-          nameEn: 'Friday Offer',
-          code: 'FRI50',
-          price: 0,
-          category: 'عروض',
-          descriptionAr: 'تخفيض 50% على كافة التحاليل',
-          descriptionEn: '50% off all tests',
-          keywords: []),
-      "discount": "50%",
-      "icon": Icons.local_fire_department,
-      "color": Colors.amber,
-    },
-    {
-      "test": MedicalTest(
-          id: 'promo_week',
-          nameAr: 'عرض لمدة أسبوع',
-          nameEn: 'One Week Offer',
-          code: 'WEEK39',
-          price: 39000,
-          category: 'عروض',
-          descriptionAr: 'بدل 125 الف! فرصة لا تعوض',
-          descriptionEn: 'Limited time offer',
-          keywords: []),
-      "discount": "39K",
-      "icon": Icons.timer,
-      "color": Colors.redAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'promo_pcos',
-          nameAr: 'فحص تكيس المبايض',
-          nameEn: 'PCOS Test',
-          code: 'PCOS49',
-          price: 49000,
-          category: 'عروض',
-          descriptionAr: 'تحاليل الهرمونات والانسولين',
-          descriptionEn: 'Includes hormones, insulin, FBS',
-          keywords: []),
-      "discount": "49K",
-      "icon": Icons.pregnant_woman,
-      "color": Colors.pinkAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'promo_hair',
-          nameAr: 'برنامج تساقط الشعر',
-          nameEn: 'Hair Loss Program',
-          code: 'HAIR39',
-          price: 39000,
-          category: 'عروض',
-          descriptionAr: 'لمعرفة أسباب التساقط وعلاجها',
-          descriptionEn: 'Find out the causes of hair loss',
-          keywords: []),
-      "discount": "39K",
-      "icon": Icons.face_retouching_natural,
-      "color": Colors.brown,
-    },
-    {
-      "test": MedicalTest(
-          id: 'promo_vitamins',
-          nameAr: 'الفيتامينات والمعادن',
-          nameEn: 'Vitamins & Minerals',
-          code: 'VIT49',
-          price: 49000,
-          category: 'عروض',
-          descriptionAr: 'فحص شامل للفيتامينات الأساسية',
-          descriptionEn: 'Comprehensive vitamins check',
-          keywords: []),
-      "discount": "49K",
-      "icon": Icons.medication,
-      "color": Colors.orangeAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'promo_kids',
-          nameAr: 'برنامج فحص الأطفال',
-          nameEn: 'Kids Checkup',
-          code: 'KIDS49',
-          price: 49000,
-          category: 'عروض',
-          descriptionAr: 'صحة طفلك أمانة عندك',
-          descriptionEn: 'Keep your child safe',
-          keywords: []),
-      "discount": "49K",
-      "icon": Icons.child_care,
-      "color": Colors.lightGreenAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'promo_thyroid',
-          nameAr: 'فحص الغدة الدرقية',
-          nameEn: 'Thyroid Test',
-          code: 'THY25',
-          price: 25000,
-          category: 'عروض',
-          descriptionAr: 'يشمل: TSH, T3, T4',
-          descriptionEn: 'TSH, T3, T4',
-          keywords: []),
-      "discount": "25K",
-      "icon": Icons.medical_services_outlined,
-      "color": Colors.white,
-    },
-    {
-      "test": MedicalTest(
-          id: 'promo_comp',
-          nameAr: 'فحص القمة الشامل',
-          nameEn: 'Comprehensive Test',
-          code: 'COMP35',
-          price: 35000,
-          category: 'عروض',
-          descriptionAr: 'اطمئن على صحتك بسعر رمزي',
-          descriptionEn: 'Check your health',
-          keywords: []),
-      "discount": "35K",
-      "icon": Icons.monitor_heart_outlined,
-      "color": Colors.cyanAccent,
-    },
+final List<_LabOffer> _kLabOffers = [
+  // --- العرضان الأساسيان (كانوا مكتوبين يدوي بـ _buildOffersSection) ---
+  _LabOffer(
+    test: MedicalTest(
+        id: 'offer_family',
+        nameAr: 'فحص العائلة المخفّض',
+        nameEn: 'Family Discount Package',
+        code: 'FAM01',
+        price: 25000, // سعر الشخص الواحد
+        category: 'عروض',
+        descriptionAr: 'كل 3 أشخاص = الرابع مجاني 🎁',
+        descriptionEn: 'Buy 3 Get 1 Free',
+        keywords: []),
+    icon: Icons.family_restroom,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'offer_1',
+        nameAr: 'الفحص الدوري + فيتامين D مجاني 🎁',
+        nameEn: 'Periodic Checkup + Free Vit D',
+        code: 'OFF01',
+        price: 25000,
+        category: 'عروض',
+        descriptionAr: 'تحليل دم + سكر + وظائف كلى + كبد',
+        descriptionEn: 'CBC + Sugar + Kidney + Liver',
+        keywords: []),
+    icon: Icons.biotech,
+    oldPrice: '35,000',
+  ),
 
-    // --- الباقات الـ 13 الجديدة ---
-    {
-      "test": MedicalTest(
-          id: 'pkg_foreign_workers',
-          nameAr: 'باقة العاملات الأجنبيات',
-          nameEn: 'Foreign Workers Pkg',
-          code: 'FW30',
-          price: 30000,
-          category: 'عروض',
-          descriptionAr: 'لأغراض الإقامة والعمل',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "30K",
-      "icon": Icons.badge,
-      "color": Colors.tealAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_female_hormones',
-          nameAr: 'هرمونات نسائية',
-          nameEn: 'Female Hormones',
-          code: 'FH39',
-          price: 39000,
-          category: 'عروض',
-          descriptionAr: 'تأخر الحمل، الدورة، تكيس المبايض',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "39K",
-      "icon": Icons.female,
-      "color": Colors.pink,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_pregnancy_delay',
-          nameAr: 'تأخر الحمل (للنساء)',
-          nameEn: 'Pregnancy Delay Pkg',
-          code: 'PRG75',
-          price: 75000,
-          category: 'عروض',
-          descriptionAr: 'خطوة أولى لتقييم الخصوبة',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "75K",
-      "icon": Icons.child_friendly,
-      "color": Colors.purpleAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_male_hormones',
-          nameAr: 'هرمونات رجالية',
-          nameEn: 'Male Hormones',
-          code: 'MH39',
-          price: 39000,
-          category: 'عروض',
-          descriptionAr: 'ضعف عام، تساقط شعر، خصوبة',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "39K",
-      "icon": Icons.male,
-      "color": Colors.blueAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_anemia',
-          nameAr: 'فقر الدم الشامل',
-          nameEn: 'Anemia Pkg',
-          code: 'ANM39',
-          price: 39000,
-          category: 'عروض',
-          descriptionAr: 'إرهاق، دوخة، شحوب',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "39K",
-      "icon": Icons.bloodtype,
-      "color": Colors.red,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_heart_lipids',
-          nameAr: 'القلب والدهون',
-          nameEn: 'Heart & Lipids Pkg',
-          code: 'HL29',
-          price: 29000,
-          category: 'عروض',
-          descriptionAr: 'للاطمئنان على صحة القلب',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "29K",
-      "icon": Icons.favorite,
-      "color": Colors.redAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_fatigue_hair',
-          nameAr: 'الإرهاق والتساقط',
-          nameEn: 'Fatigue & Hair Pkg',
-          code: 'FH39',
-          price: 39000,
-          category: 'عروض',
-          descriptionAr: 'تعب دائم، دوخة، تساقط',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "39K",
-      "icon": Icons.battery_alert,
-      "color": Colors.blueGrey,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_diabetes',
-          nameAr: 'السكري الشامل',
-          nameEn: 'Diabetes Pkg',
-          code: 'DIA39',
-          price: 39000,
-          category: 'عروض',
-          descriptionAr: 'للإطمئنان أو لمرضى السكري',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "39K",
-      "icon": Icons.monitor_weight,
-      "color": Colors.purple,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_clots',
-          nameAr: 'القلب والجلطات',
-          nameEn: 'Heart & Clots Pkg',
-          code: 'HC75',
-          price: 75000,
-          category: 'عروض',
-          descriptionAr: 'فوق 35 سنة أو تاريخ عائلي',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "75K",
-      "icon": Icons.monitor_heart,
-      "color": Colors.red,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_marriage',
-          nameAr: 'فحص قبل الزواج',
-          nameEn: 'Pre-Marriage Pkg',
-          code: 'MAR49',
-          price: 49000,
-          category: 'عروض',
-          descriptionAr: 'فحص ضروري لكل شاب وبنية',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "49K",
-      "icon": Icons.favorite_border,
-      "color": Colors.greenAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_fatigue_top',
-          nameAr: 'الإرهاق الشامل',
-          nameEn: 'Top Fatigue Pkg',
-          code: 'TF49',
-          price: 49000,
-          category: 'عروض',
-          descriptionAr: 'الأكثر طلباً للتعب المستمر',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "49K",
-      "icon": Icons.bed,
-      "color": Colors.deepPurpleAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_ramadan',
-          nameAr: 'الشامل الرمضاني',
-          nameEn: 'Ramadan Pkg',
-          code: 'RAM39',
-          price: 39000,
-          category: 'عروض',
-          descriptionAr: 'اطمئنان كامل قبل رمضان',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "39K",
-      "icon": Icons.nightlight_round,
-      "color": Colors.amberAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_energy',
-          nameAr: 'باقة 1: الطاقة والصحة',
-          nameEn: 'Energy Pkg',
-          code: 'ENG35',
-          price: 35000,
-          category: 'عروض',
-          descriptionAr: 'للتعب وتساقط الشعر والدوخة',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "35K",
-      "icon": Icons.bolt,
-      "color": Colors.yellowAccent,
-    },
+  // --- العروض الأساسية القديمة (كانت بالسلايدر المتحرك) ---
+  _LabOffer(
+    test: MedicalTest(
+        id: 'promo_week',
+        nameAr: 'عرض لمدة أسبوع',
+        nameEn: 'One Week Offer',
+        code: 'WEEK39',
+        price: 39000,
+        category: 'عروض',
+        descriptionAr: 'بدل 125 الف! فرصة لا تعوض',
+        descriptionEn: 'Limited time offer',
+        keywords: []),
+    icon: Icons.timer,
+    oldPrice: '125,000',
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'promo_pcos',
+        nameAr: 'فحص تكيس المبايض',
+        nameEn: 'PCOS Test',
+        code: 'PCOS49',
+        price: 49000,
+        category: 'عروض',
+        descriptionAr: 'تحاليل الهرمونات والانسولين',
+        descriptionEn: 'Includes hormones, insulin, FBS',
+        keywords: []),
+    icon: Icons.pregnant_woman,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'promo_hair',
+        nameAr: 'برنامج تساقط الشعر',
+        nameEn: 'Hair Loss Program',
+        code: 'HAIR39',
+        price: 39000,
+        category: 'عروض',
+        descriptionAr: 'لمعرفة أسباب التساقط وعلاجها',
+        descriptionEn: 'Find out the causes of hair loss',
+        keywords: []),
+    icon: Icons.face_retouching_natural,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'promo_vitamins',
+        nameAr: 'الفيتامينات والمعادن',
+        nameEn: 'Vitamins & Minerals',
+        code: 'VIT49',
+        price: 49000,
+        category: 'عروض',
+        descriptionAr: 'فحص شامل للفيتامينات الأساسية',
+        descriptionEn: 'Comprehensive vitamins check',
+        keywords: []),
+    icon: Icons.medication,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'promo_kids',
+        nameAr: 'برنامج فحص الأطفال',
+        nameEn: 'Kids Checkup',
+        code: 'KIDS49',
+        price: 49000,
+        category: 'عروض',
+        descriptionAr: 'صحة طفلك أمانة عندك',
+        descriptionEn: 'Keep your child safe',
+        keywords: []),
+    icon: Icons.child_care,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'promo_thyroid',
+        nameAr: 'فحص الغدة الدرقية',
+        nameEn: 'Thyroid Test',
+        code: 'THY25',
+        price: 25000,
+        category: 'عروض',
+        descriptionAr: 'يشمل: TSH, T3, T4',
+        descriptionEn: 'TSH, T3, T4',
+        keywords: []),
+    icon: Icons.medical_services_outlined,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'promo_comp',
+        nameAr: 'فحص القمة الشامل',
+        nameEn: 'Comprehensive Test',
+        code: 'COMP35',
+        price: 35000,
+        category: 'عروض',
+        descriptionAr: 'اطمئن على صحتك بسعر رمزي',
+        descriptionEn: 'Check your health',
+        keywords: []),
+    icon: Icons.monitor_heart_outlined,
+  ),
 
-    // --- الإضافات الخمسة الجديدة ---
-    {
-      "test": MedicalTest(
-          id: 'pkg_sports_general',
-          nameAr: 'باقة الرياضيين',
-          nameEn: 'Sports General',
-          code: 'SPT59',
-          price: 59000,
-          category: 'عروض',
-          descriptionAr: 'فحص الأداء والصحة العامة',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "59K",
-      "icon": Icons.fitness_center,
-      "color": Colors.orange,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_obesity',
-          nameAr: 'باقة فحص السمنة',
-          nameEn: 'Obesity Pkg',
-          code: 'OBS59',
-          price: 59000,
-          category: 'عروض',
-          descriptionAr: 'فحص شامل لمخاطر الوزن الزائد',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "59K",
-      "icon": Icons.fastfood,
-      "color": Colors.deepOrangeAccent,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_sports_hormones',
-          nameAr: 'هرمونات الرياضيين',
-          nameEn: 'Sports Hormones',
-          code: 'SPH69',
-          price: 69000,
-          category: 'عروض',
-          descriptionAr: 'الفحوصات الهرمونية للرياضيين',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "69K",
-      "icon": Icons.sports_gymnastics,
-      "color": Colors.blue,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_minerals',
-          nameAr: 'باقة العناصر المعدنية',
-          nameEn: 'Minerals Pkg',
-          code: 'MIN29',
-          price: 29000,
-          category: 'عروض',
-          descriptionAr: 'لتعب مزمن أو هشاشة عظام',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "29K",
-      "icon": Icons.science,
-      "color": Colors.teal,
-    },
-    {
-      "test": MedicalTest(
-          id: 'pkg_grand_full_body',
-          nameAr: 'الباقة الكبرى الموسعة',
-          nameEn: 'Grand Full Body',
-          code: 'GFB225',
-          price: 225000,
-          category: 'عروض',
-          descriptionAr: 'فحص شامل لكل الجسم تقريباً',
-          descriptionEn: '',
-          keywords: []),
-      "discount": "225K",
-      "icon": Icons.health_and_safety,
-      "color": Colors.indigoAccent,
-    },
-  ];
+  // --- الباقات الـ 13 ---
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_foreign_workers',
+        nameAr: 'باقة العاملات الأجنبيات',
+        nameEn: 'Foreign Workers Pkg',
+        code: 'FW30',
+        price: 30000,
+        category: 'عروض',
+        descriptionAr: 'لأغراض الإقامة والعمل',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.badge,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_female_hormones',
+        nameAr: 'هرمونات نسائية',
+        nameEn: 'Female Hormones',
+        code: 'FH39',
+        price: 39000,
+        category: 'عروض',
+        descriptionAr: 'تأخر الحمل، الدورة، تكيس المبايض',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.female,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_pregnancy_delay',
+        nameAr: 'تأخر الحمل (للنساء)',
+        nameEn: 'Pregnancy Delay Pkg',
+        code: 'PRG75',
+        price: 75000,
+        category: 'عروض',
+        descriptionAr: 'خطوة أولى لتقييم الخصوبة',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.child_friendly,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_male_hormones',
+        nameAr: 'هرمونات رجالية',
+        nameEn: 'Male Hormones',
+        code: 'MH39',
+        price: 39000,
+        category: 'عروض',
+        descriptionAr: 'ضعف عام، تساقط شعر، خصوبة',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.male,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_anemia',
+        nameAr: 'فقر الدم الشامل',
+        nameEn: 'Anemia Pkg',
+        code: 'ANM39',
+        price: 39000,
+        category: 'عروض',
+        descriptionAr: 'إرهاق، دوخة، شحوب',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.bloodtype,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_heart_lipids',
+        nameAr: 'القلب والدهون',
+        nameEn: 'Heart & Lipids Pkg',
+        code: 'HL29',
+        price: 29000,
+        category: 'عروض',
+        descriptionAr: 'للاطمئنان على صحة القلب',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.favorite,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_fatigue_hair',
+        nameAr: 'الإرهاق والتساقط',
+        nameEn: 'Fatigue & Hair Pkg',
+        code: 'FTH39',
+        price: 39000,
+        category: 'عروض',
+        descriptionAr: 'تعب دائم، دوخة، تساقط',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.battery_alert,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_diabetes',
+        nameAr: 'السكري الشامل',
+        nameEn: 'Diabetes Pkg',
+        code: 'DIA39',
+        price: 39000,
+        category: 'عروض',
+        descriptionAr: 'للإطمئنان أو لمرضى السكري',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.monitor_weight,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_clots',
+        nameAr: 'القلب والجلطات',
+        nameEn: 'Heart & Clots Pkg',
+        code: 'HC75',
+        price: 75000,
+        category: 'عروض',
+        descriptionAr: 'فوق 35 سنة أو تاريخ عائلي',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.monitor_heart,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_marriage',
+        nameAr: 'فحص قبل الزواج',
+        nameEn: 'Pre-Marriage Pkg',
+        code: 'MAR49',
+        price: 49000,
+        category: 'عروض',
+        descriptionAr: 'فحص ضروري لكل شاب وبنية',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.favorite_border,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_fatigue_top',
+        nameAr: 'الإرهاق الشامل',
+        nameEn: 'Top Fatigue Pkg',
+        code: 'TF49',
+        price: 49000,
+        category: 'عروض',
+        descriptionAr: 'الأكثر طلباً للتعب المستمر',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.bed,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_ramadan',
+        nameAr: 'الشامل الرمضاني',
+        nameEn: 'Ramadan Pkg',
+        code: 'RAM39',
+        price: 39000,
+        category: 'عروض',
+        descriptionAr: 'اطمئنان كامل قبل رمضان',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.nightlight_round,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_energy',
+        nameAr: 'باقة 1: الطاقة والصحة',
+        nameEn: 'Energy Pkg',
+        code: 'ENG35',
+        price: 35000,
+        category: 'عروض',
+        descriptionAr: 'للتعب وتساقط الشعر والدوخة',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.bolt,
+  ),
 
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController(initialPage: 0);
-    Future.delayed(const Duration(seconds: 4), _autoSlide);
-  }
+  // --- الإضافات الخمسة ---
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_sports_general',
+        nameAr: 'باقة الرياضيين',
+        nameEn: 'Sports General',
+        code: 'SPT59',
+        price: 59000,
+        category: 'عروض',
+        descriptionAr: 'فحص الأداء والصحة العامة',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.fitness_center,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_obesity',
+        nameAr: 'باقة فحص السمنة',
+        nameEn: 'Obesity Pkg',
+        code: 'OBS59',
+        price: 59000,
+        category: 'عروض',
+        descriptionAr: 'فحص شامل لمخاطر الوزن الزائد',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.fastfood,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_sports_hormones',
+        nameAr: 'هرمونات الرياضيين',
+        nameEn: 'Sports Hormones',
+        code: 'SPH69',
+        price: 69000,
+        category: 'عروض',
+        descriptionAr: 'الفحوصات الهرمونية للرياضيين',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.sports_gymnastics,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_minerals',
+        nameAr: 'باقة العناصر المعدنية',
+        nameEn: 'Minerals Pkg',
+        code: 'MIN29',
+        price: 29000,
+        category: 'عروض',
+        descriptionAr: 'لتعب مزمن أو هشاشة عظام',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.science,
+  ),
+  _LabOffer(
+    test: MedicalTest(
+        id: 'pkg_grand_full_body',
+        nameAr: 'الباقة الكبرى الموسعة',
+        nameEn: 'Grand Full Body',
+        code: 'GFB225',
+        price: 225000,
+        category: 'عروض',
+        descriptionAr: 'فحص شامل لكل الجسم تقريباً',
+        descriptionEn: '',
+        keywords: []),
+    icon: Icons.health_and_safety,
+  ),
+];
 
-  void _autoSlide() {
-    if (!mounted) return;
-    setState(() {
-      if (_currentPage < _slides.length - 1) {
-        _currentPage++;
-      } else {
-        _currentPage = 0;
-      }
-    });
-    _pageController.animateToPage(
-      _currentPage,
-      duration: const Duration(milliseconds: 800),
-      curve: Curves.fastOutSlowIn,
-    );
-    Future.delayed(const Duration(seconds: 4), _autoSlide);
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
-  }
+class _PinnedPromoBanners extends StatelessWidget {
+  final Function(MedicalTest) onOfferTap;
+  const _PinnedPromoBanners({required this.onOfferTap});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        SizedBox(
-          height: 110,
-          child: PageView.builder(
-            controller: _pageController,
-            onPageChanged: (index) {
-              setState(() => _currentPage = index);
-            },
-            itemCount: _slides.length,
-            itemBuilder: (context, index) {
-              final slide = _slides[index];
-              return _buildSlideCard(slide);
-            },
-          ),
-        ),
-        const SizedBox(height: 8),
-        // تعديل نقاط المؤشر لتناسب العدد الكبير من العروض (Scrollable Dots)
-        SizedBox(
-          height: 10,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(
-                _slides.length,
-                (index) => AnimatedContainer(
-                  duration: const Duration(milliseconds: 300),
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  height: 6,
-                  width: _currentPage == index ? 20 : 6,
-                  decoration: BoxDecoration(
-                    color: _currentPage == index
-                        ? LabTheme.primaryColor
-                        : Colors.grey[300],
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
+    if (_kPinnedPromos.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 4),
+      child: Column(
+        children: [
+          for (final slide in _kPinnedPromos)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _PromoBannerCard(
+                slide: slide,
+                onTap: () => onOfferTap(slide['test'] as MedicalTest),
               ),
             ),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
+}
 
-  Widget _buildSlideCard(Map<String, dynamic> slide) {
+// ------------------------------------------------------------------------
+// ✅ شكل بطاقة العرض الشريطية — يستعملها البانر المثبّت فوق
+//    والسلايدر المتحرك جوه سوا، حتى الستايل يبقى موحّد
+// ------------------------------------------------------------------------
+class _PromoBannerCard extends StatelessWidget {
+  final Map<String, dynamic> slide;
+  final VoidCallback onTap;
+
+  const _PromoBannerCard({required this.slide, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
     final MedicalTest test = slide['test'];
 
     return GestureDetector(
-      onTap: () => widget.onOfferTap(test),
+      onTap: onTap,
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 20),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),

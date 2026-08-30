@@ -30,8 +30,8 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   bool _isLocalLoading = false;
 
-  // ✅ متغير الموافقة على الشروط
-  bool _agreedToTerms = false;
+  // ✅ متغير الموافقة على الشروط — مؤشّر افتراضياً، والمستخدم يكدر يشيله
+  bool _agreedToTerms = true;
 
   @override
   void dispose() {
