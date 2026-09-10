@@ -2129,24 +2129,12 @@ class _HomeScreenState extends State<HomeScreen>
       ),
       title: Row(
         children: [
-          // ✅ التعديل هنا: مربع بحواف دائرية (Rounded Square)
-          Container(
-            padding: const EdgeInsets.all(
-                8), // مسافة داخلية لكي لا تلتصق الصورة بالحواف
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2), // لون الخلفية الشفاف
-              borderRadius: BorderRadius.circular(
-                  15), // ✅ جعل الزوايا ناعمة (مربع دائري الحواف)
-              border: Border.all(
-                  color: Colors.white.withOpacity(0.1),
-                  width: 1), // إطار خفيف جمالي
-            ),
-            child: Image.asset(
-              'assets/logo.png',
-              height: 40,
-              width: 40,
-              fit: BoxFit.contain, // عرض الصورة بالكامل داخل المربع
-            ),
+          // الشعار نفسه مربع أخضر بزوايا مدوّرة — بلا إطار أبيض حوله
+          Image.asset(
+            'assets/logo.png',
+            height: 44,
+            width: 44,
+            fit: BoxFit.contain,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -2242,10 +2230,12 @@ class _HomeScreenState extends State<HomeScreen>
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
-        // ✅ 1. البانر المثبّت فوق — ثابت ما يتحرك (عرض يوم الجمعة)
+        // ✅ 1. البانرات المثبّتة فوق — تتبدل تلقائياً كل 5 ثوانٍ
+        //    (عرض يوم الجمعة + العرض الأسبوعي + موقع المختبر)
         SliverToBoxAdapter(
           child: _PinnedPromoBanners(
             onOfferTap: (test) => _showOfferDetails(context, test, appModel),
+            onUrlTap: _openExternalUrl,
           ),
         ),
 
@@ -2394,13 +2384,57 @@ class _HomeScreenState extends State<HomeScreen>
               children: [
                 const Icon(Icons.local_offer, color: Colors.amber, size: 24),
                 const SizedBox(width: 8),
-                Text(
-                  '🔥 عروض المختبر الحصرية',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : Colors.black87,
-                    fontFamily: 'Cairo',
+                // ✅ Expanded حتى العنوان ما يزاحم الزر بالشاشات الضيقة
+                Expanded(
+                  child: Text(
+                    '🔥 عروض المختبر الحصرية',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white : Colors.black87,
+                      fontFamily: 'Cairo',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // ✅ زر يفتح كل العروض بقائمة عمودية — الصف الأفقي
+                //    للتصفح السريع، وهذا للي يريد يشوفهن كلهن
+                InkWell(
+                  onTap: () => _openAllOffers(isDark, appModel),
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 7),
+                    decoration: BoxDecoration(
+                      gradient: LabTheme.primaryGradient,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: LabTheme.secondaryColor.withOpacity(0.35),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'عرض الكل ${_kLabOffers.length}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            fontFamily: 'Cairo',
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        const Icon(Icons.view_list_rounded,
+                            color: Colors.white, size: 16),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -2435,6 +2469,149 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ------------------------------------------------------------------------
+  // ✅ فتح رابط خارجي (موقع المختبر على خرائط جوجل)
+  // ------------------------------------------------------------------------
+  Future<void> _openExternalUrl(String rawUrl) async {
+    final Uri url = Uri.parse(rawUrl);
+    bool opened = false;
+    try {
+      // ملاحظة: ما نستعمل canLaunchUrl كبوابة — على أندرويد 11+ يرجّع
+      //   false حتى لو الرابط ينفتح عادي، فيصير فشل صامت. launchUrl
+      //   نفسها ترجّع النتيجة الصح وترمي استثناء لو ما لگت تطبيق
+      opened = await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'تعذّر فتح الخرائط — تأكد من وجود تطبيق خرائط أو متصفح',
+            style: TextStyle(fontFamily: 'Cairo'),
+          ),
+          backgroundColor: LabTheme.warningColor,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  // ------------------------------------------------------------------------
+  // ✅ صفحة "كل العروض" — قائمة عمودية بكل الباقات بكارتات عريضة.
+  //    الصف الأفقي بالرئيسية يبقى للتصفح السريع، وهاي للمراجعة الكاملة
+  //    بلا سحب. نفس الكارت بس بوضع wide.
+  // ------------------------------------------------------------------------
+  void _openAllOffers(bool isDark, LabAppModel appModel) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (pageContext) => Scaffold(
+          backgroundColor:
+              isDark ? LabTheme.darkBackground : LabTheme.lightBackground,
+          body: CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              SliverAppBar(
+                expandedHeight: 160,
+                pinned: true,
+                elevation: 0,
+                backgroundColor: LabTheme.primaryColor,
+                iconTheme: const IconThemeData(color: Colors.white),
+                flexibleSpace: FlexibleSpaceBar(
+                  background: Container(
+                    decoration: BoxDecoration(
+                      gradient: LabTheme.primaryGradient,
+                    ),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: Opacity(
+                            opacity: 0.1,
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                image: DecorationImage(
+                                  image: AssetImage('assets/cart_pattern.png'),
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Container(
+                                width: 62,
+                                height: 62,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.local_offer,
+                                  color: Colors.white,
+                                  size: 32,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              const Text(
+                                'عروض المختبر الحصرية',
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  fontFamily: 'Cairo',
+                                ),
+                              ),
+                              Text(
+                                '${_kLabOffers.length} عرض متاح',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.white.withOpacity(0.85),
+                                  fontFamily: 'Cairo',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(15, 15, 15, 30),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (_, index) {
+                      final offer = _kLabOffers[index];
+                      // نفس بالتة التدرّجات مال الصف الأفقي حتى الترتيب
+                      //    اللوني يبقى هو هو بالمكانين
+                      final green =
+                          _kOfferGreens[index % _kOfferGreens.length];
+                      return _buildOfferCard(
+                        test: offer.test,
+                        oldPrice: offer.oldPrice,
+                        color1: green[0],
+                        color2: green[1],
+                        icon: offer.icon,
+                        appModel: appModel,
+                        wide: true,
+                        ctx: pageContext,
+                      );
+                    },
+                    childCount: _kLabOffers.length,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------------------
   // ✅ 1. بطاقة العرض (تم ربطها بالنافذة المنبثقة)
   // ------------------------------------------------------------------------
   Widget _buildOfferCard({
@@ -2444,13 +2621,20 @@ class _HomeScreenState extends State<HomeScreen>
     required Color color2,
     required IconData icon,
     required LabAppModel appModel,
+    // ✅ wide = كارت بعرض الشاشة لصفحة "كل العروض" العمودية.
+    //    بهالوضع الكارت ياخذ طول محتواه بدل ارتفاع ثابت، فما يفيض
+    //    مهما طال اسم الباقة
+    bool wide = false,
+    // سياق الصفحة المفتوحة — حتى الشيت والسناكبار ينفتحون فوگها مو تحتها
+    BuildContext? ctx,
   }) {
+    final cardContext = ctx ?? context;
     return InkWell(
-      onTap: () =>
-          _showOfferDetails(context, test, appModel), // فتح التفاصيل عند الضغط
+      onTap: () => _showOfferDetails(
+          cardContext, test, appModel), // فتح التفاصيل عند الضغط
       child: Container(
-        width: 280,
-        margin: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+        width: wide ? double.infinity : 280,
+        margin: EdgeInsets.symmetric(horizontal: 5, vertical: wide ? 7 : 5),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
           gradient: LinearGradient(
@@ -2480,6 +2664,7 @@ class _HomeScreenState extends State<HomeScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: wide ? MainAxisSize.min : MainAxisSize.max,
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2501,7 +2686,9 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                     ],
                   ),
-                  const Spacer(),
+                  // ✅ بالوضع العريض ماكو ارتفاع ثابت يتوزع، فـ Spacer ينهار —
+                  //    نبدله بمسافة ثابتة
+                  if (wide) const SizedBox(height: 14) else const Spacer(),
                   Text(
                     test.nameAr,
                     // ✅ سقف سطرين — أسماء الباقات الجديدة أطول من العرضين
@@ -2559,7 +2746,7 @@ class _HomeScreenState extends State<HomeScreen>
                       InkWell(
                         onTap: () {
                           appModel.addToCart(test);
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          ScaffoldMessenger.of(cardContext).showSnackBar(
                             const SnackBar(
                               content: Text("تم إضافة العرض للسلة ✅",
                                   style: TextStyle(fontFamily: 'Cairo')),
@@ -8895,6 +9082,35 @@ final List<Map<String, dynamic>> _kPinnedPromos = [
     "icon": Icons.local_fire_department,
     "color": Colors.amber,
   },
+  // ✅ العرض الأسبوعي — انرفع من صف العروض الحصرية لفوق هنا
+  //    (69% = 39,000 بدل 125,000)
+  {
+    "test": MedicalTest(
+        id: 'promo_week',
+        nameAr: 'عرض لمدة أسبوع',
+        nameEn: 'One Week Offer',
+        code: 'WEEK39',
+        price: 39000,
+        category: 'عروض',
+        // الوصف يبقى سطر واحد بشريط ضيق — أي زيادة تنكتم بـ ellipsis
+        descriptionAr: 'بـ 39,000 د.ع بدل 125,000',
+        descriptionEn: 'Limited time offer',
+        keywords: []),
+    "discount": "69%",
+    "icon": Icons.timer,
+    "color": Colors.amber,
+  },
+  // ✅ شريحة موقع المختبر — بدل الـ test عندها title/subtitle مباشرة،
+  //    وبدل شارة الخصم دبوس موقع. وجود "url" هو الي يخلي الضغط
+  //    يفتح الخرائط بدل ما يفتح شيت تفاصيل عرض
+  {
+    "title": 'مختبر القمة الطبي',
+    "subtitle": 'Al Qimmah Medical Lab',
+    "badgeIcon": Icons.location_on,
+    "icon": Icons.map_rounded,
+    "color": Colors.amber,
+    "url": _kLabMapsUrl,
+  },
 ];
 
 // ------------------------------------------------------------------------
@@ -8959,20 +9175,8 @@ final List<_LabOffer> _kLabOffers = [
   ),
 
   // --- العروض الأساسية القديمة (كانت بالسلايدر المتحرك) ---
-  _LabOffer(
-    test: MedicalTest(
-        id: 'promo_week',
-        nameAr: 'عرض لمدة أسبوع',
-        nameEn: 'One Week Offer',
-        code: 'WEEK39',
-        price: 39000,
-        category: 'عروض',
-        descriptionAr: 'بدل 125 الف! فرصة لا تعوض',
-        descriptionEn: 'Limited time offer',
-        keywords: []),
-    icon: Icons.timer,
-    oldPrice: '125,000',
-  ),
+  // ملاحظة: 'promo_week' (عرض لمدة أسبوع) انرفع للبانر المثبّت فوق
+  //         بـ _kPinnedPromos — لا تعيده هنا حتى ما ينعرض مرتين
   _LabOffer(
     test: MedicalTest(
         id: 'promo_pcos',
@@ -9291,9 +9495,61 @@ final List<_LabOffer> _kLabOffers = [
   ),
 ];
 
-class _PinnedPromoBanners extends StatelessWidget {
+// ✅ موقع المختبر على خرائط جوجل — مختبر القمة الطبي / Al Qimmah Medical Lab
+const String _kLabMapsUrl = 'https://maps.app.goo.gl/sxQdRWD1h9jSfBGNA';
+
+// ✅ توقيت دوران البانرات — مسمّاة هنا حتى تنضبط من مكان واحد
+const Duration _kPromoHold = Duration(seconds: 5); // وقت بقاء كل بانر
+const Duration _kPromoSlide = Duration(milliseconds: 550); // زمن الانتقال
+
+class _PinnedPromoBanners extends StatefulWidget {
   final Function(MedicalTest) onOfferTap;
-  const _PinnedPromoBanners({required this.onOfferTap});
+  final Function(String) onUrlTap;
+  const _PinnedPromoBanners({
+    required this.onOfferTap,
+    required this.onUrlTap,
+  });
+
+  @override
+  State<_PinnedPromoBanners> createState() => _PinnedPromoBannersState();
+}
+
+class _PinnedPromoBannersState extends State<_PinnedPromoBanners> {
+  final PageController _controller = PageController();
+  Timer? _timer;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer();
+  }
+
+  void _startTimer() {
+    // بانر واحد = ماكو شنو يدور، فما ننزف تايمر بلا فائدة
+    if (_kPinnedPromos.length < 2) return;
+    _timer?.cancel();
+    _timer = Timer.periodic(_kPromoHold, (_) => _next());
+  }
+
+  void _next() {
+    // hasClients لازمة — لو الويدجت انبنت وما انعرضت بعد، الكونترولر
+    //   ما عنده صفحة يحسب منها ويرمي خطأ
+    if (!mounted || !_controller.hasClients) return;
+    _controller.animateToPage(
+      (_index + 1) % _kPinnedPromos.length,
+      duration: _kPromoSlide,
+      curve: Curves.easeInOutCubic,
+    );
+  }
+
+  @override
+  void dispose() {
+    // بلا هذا التايمر يضل شغّال بعد ما تنهدم الشاشة ويصير تسريب
+    _timer?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -9303,14 +9559,57 @@ class _PinnedPromoBanners extends StatelessWidget {
       padding: const EdgeInsets.only(top: 14, bottom: 4),
       child: Column(
         children: [
-          for (final slide in _kPinnedPromos)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _PromoBannerCard(
-                slide: slide,
-                onTap: () => onOfferTap(slide['test'] as MedicalTest),
+          SizedBox(
+            height: 96,
+            child: PageView.builder(
+              controller: _controller,
+              itemCount: _kPinnedPromos.length,
+              onPageChanged: (i) {
+                setState(() => _index = i);
+                // المستخدم سحب بيده؟ نصفّر العدّاد حتى ما تقفز عليه
+                //   الصفحة بعد جزء من الثانية
+                _startTimer();
+              },
+              // Center تخلي قيود الارتفاع مرنة — الكارت ياخذ طوله الطبيعي
+              //   بدل ما ينشد على 96 ويفيض لو الخط طلع أطول
+              itemBuilder: (_, i) => Center(
+                child: _PromoBannerCard(
+                  slide: _kPinnedPromos[i],
+                  onTap: () {
+                    final slide = _kPinnedPromos[i];
+                    // وجود "url" = شريحة رابط (الموقع)، بلاها = شريحة عرض
+                    final url = slide['url'] as String?;
+                    if (url != null) {
+                      widget.onUrlTap(url);
+                    } else {
+                      widget.onOfferTap(slide['test'] as MedicalTest);
+                    }
+                  },
+                ),
               ),
             ),
+          ),
+          if (_kPinnedPromos.length > 1) ...[
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (int i = 0; i < _kPinnedPromos.length; i++)
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: i == _index ? 22 : 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: i == _index
+                          ? LabTheme.secondaryColor
+                          : Colors.grey.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -9329,7 +9628,12 @@ class _PromoBannerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final MedicalTest test = slide['test'];
+    // شريحة عرض تجيب نصوصها من الـ test، وشريحة الموقع تعطيها مباشرة
+    final MedicalTest? test = slide['test'] as MedicalTest?;
+    final String title = slide['title'] as String? ?? test?.nameAr ?? '';
+    final String subtitle =
+        slide['subtitle'] as String? ?? test?.descriptionAr ?? '';
+    final String? discount = slide['discount'] as String?;
 
     return GestureDetector(
       onTap: onTap,
@@ -9360,14 +9664,21 @@ class _PromoBannerCard extends StatelessWidget {
                 shape: BoxShape.circle,
                 border: Border.all(color: Colors.white.withOpacity(0.3)),
               ),
-              child: Text(
-                slide['discount'],
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 15,
-                ),
-              ),
+              // شريحة الخصم تعرض نسبة، وشريحة الموقع تعرض أيقونة دبوس
+              child: discount != null
+                  ? Text(
+                      discount,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                    )
+                  : Icon(
+                      slide['badgeIcon'] as IconData? ?? Icons.info_outline,
+                      color: Colors.white,
+                      size: 22,
+                    ),
             ),
             const SizedBox(width: 15),
             Expanded(
@@ -9381,7 +9692,7 @@ class _PromoBannerCard extends StatelessWidget {
                       const SizedBox(width: 5),
                       Expanded(
                         child: Text(
-                          test.nameAr,
+                          title,
                           style: TextStyle(
                             color: slide['color'],
                             fontWeight: FontWeight.bold,
@@ -9396,7 +9707,7 @@ class _PromoBannerCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    test.descriptionAr,
+                    subtitle,
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,

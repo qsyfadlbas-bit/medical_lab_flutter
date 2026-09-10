@@ -293,16 +293,15 @@ class _SplashScreenState extends State<SplashScreen>
                   child: Container(
                     width: 200,
                     height: 200,
-                    padding: const EdgeInsets.all(25),
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(40), // زوايا ناعمة
+                      // بلا خلفية بيضاء — الشعار نفسه مربع أخضر بزوايا مدوّرة.
+                      // نصف القطر 54 = 27% من الضلع، نفس تدوير الشعار حتى الظل ينطبق على حدوده
+                      borderRadius: BorderRadius.circular(54),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.25),
-                          blurRadius: 30, // ظل ناعم وكبير
-                          offset: const Offset(0, 15), // اتجاه الظل للأسفل
-                          spreadRadius: 2,
+                          color: Colors.black.withOpacity(0.22),
+                          blurRadius: 28, // ظل ناعم يعطي عمق فوق التدرج
+                          offset: const Offset(0, 14), // اتجاه الظل للأسفل
                         ),
                       ],
                     ),

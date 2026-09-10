@@ -13,7 +13,7 @@
         tools:node="remove" />
 
     <application
-        android:label="مختبر قمة  "
+        android:label="مختبر القمة"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity
@@ -61,6 +61,17 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- ✅ مطلوبة لـ url_launcher على أندرويد 11+ (API 30).
+             بلاها النظام يخفي تطبيقات المتصفح والخرائط عن التطبيق،
+             فـ canLaunchUrl يرجّع false ولا رابط ينفتح — بلا أي رسالة خطأ -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="geo"/>
         </intent>
     </queries>
 </manifest>
