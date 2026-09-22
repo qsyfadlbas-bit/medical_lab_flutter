@@ -8,6 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:medical_lab_flutter/services/api_service.dart';
 import 'package:medical_lab_flutter/services/ai_service.dart';
 import 'package:medical_lab_flutter/utils/validators.dart';
+import 'package:medical_lab_flutter/utils/test_search.dart';
+import 'package:medical_lab_flutter/widgets/common/test_search_field.dart';
+import 'package:medical_lab_flutter/widgets/common/category_dropdown.dart';
 
 // ----------------------
 // 1. الموديل (المنطق)
@@ -261,25 +264,39 @@ class LabAppModel extends ChangeNotifier {
   List<MedicalTest> get allTests => _allTests;
 
   // ✅ الفلترة (تعتمد على _allTests الديناميكية)
+  //    التصنيف يفلتر أولاً، بعدها محرك البحث يرتّب حسب قوة التطابق.
+  //    البحث نفسه بـ utils/test_search.dart — تطبيع عربي + تسامح مع الأخطاء.
   List<MedicalTest> get filteredTests {
     // تصفية التحاليل فقط (استبعاد العروض من قائمة التصفح العامة)
     final testsOnly = _allTests.where((t) => t.category != 'عروض').toList();
 
-    if (_selectedCategory == 'الكل') {
-      return testsOnly
-          .where((test) =>
-              test.nameAr.contains(_searchQuery) ||
-              test.nameEn.toLowerCase().contains(_searchQuery.toLowerCase()))
-          .toList();
-    } else {
-      return testsOnly
-          .where((test) => test.category == _selectedCategory)
-          .where((test) =>
-              test.nameAr.contains(_searchQuery) ||
-              test.nameEn.toLowerCase().contains(_searchQuery.toLowerCase()))
-          .toList();
-    }
+    final scoped = _selectedCategory == 'الكل'
+        ? testsOnly
+        : testsOnly.where((t) => t.category == _selectedCategory).toList();
+
+    return searchRank(scoped, _searchQuery, fieldsOf: _searchFieldsOf);
   }
+
+  /// هل البحث الحالي يطلّع نتائج بتصنيفات ثانية؟
+  /// نستعملها بحالة "ماكو نتيجة" حتى نعرض زر "دوّر بكل التصنيفات"
+  /// بدل ما نغيّر اختيار المستخدم من وراه.
+  int get matchesOutsideCategory {
+    if (!hasSearchQuery(_searchQuery) || _selectedCategory == 'الكل') return 0;
+    final testsOnly = _allTests.where((t) => t.category != 'عروض').toList();
+    return searchRank(testsOnly, _searchQuery, fieldsOf: _searchFieldsOf).length;
+  }
+
+  /// تحويل التحليل لحقول قابلة للبحث — مكان واحد حتى الموبايل
+  /// والديسكتوب ينبحثون بنفس الطريقة بالضبط
+  static TestSearchFields _searchFieldsOf(MedicalTest t) => TestSearchFields(
+        nameAr: t.nameAr,
+        nameEn: t.nameEn,
+        code: t.code,
+        category: t.category,
+        descriptionAr: t.descriptionAr,
+        descriptionEn: t.descriptionEn,
+        keywords: t.keywords,
+      );
 
   // ✅ جلب العروض فقط (من الباك إند)
   List<MedicalTest> get offers {
@@ -290,6 +307,11 @@ class LabAppModel extends ChangeNotifier {
         'الكل',
         'فحوصات الدم',
         'الكيمياء الحيوية',
+        'السكر',
+        'الدهون',
+        'الكبد',
+        'الكلى',
+        'الغدة الدرقية',
         'فايروسات',
         'مناعة',
         'البكتيريا',
@@ -298,6 +320,23 @@ class LabAppModel extends ChangeNotifier {
         'وظائف الأعضاء',
         'أخرى'
       ];
+
+  /// عدد التحاليل بكل قسم — يتعرض جنب الاسم بالقائمة.
+  /// كل قسم بالقائمة يطلع له رقم حتى لو صفر، حتى المستخدم يعرف
+  /// شنو فاضي قبل ما يضغط عليه.
+  Map<String, int> get categoryCounts {
+    final counts = <String, int>{for (final c in categories) c: 0};
+
+    var total = 0;
+    for (final t in _allTests) {
+      final c = t.category.trim();
+      if (c.isEmpty || c == 'عروض') continue;
+      counts[c] = (counts[c] ?? 0) + 1;
+      total++;
+    }
+    counts['الكل'] = total;
+    return counts;
+  }
 
   // =================================================================
   // 🤖 قسم الذكاء الاصطناعي (المساعد الطبي)
@@ -2227,6 +2266,11 @@ class _HomeScreenState extends State<HomeScreen>
   // 1. شاشة الخدمات (الرئيسية)
   // 1. شاشة الخدمات (الرئيسية)
   Widget _buildCreativeServicesScreen(LabAppModel appModel, bool isDark) {
+    // ✅ ننده البحث مرة وحدة بالبناء. كان ينندَه جوّا باني كل كارت،
+    //    يعني الفلترة تتعاد لكل عنصر ظاهر بكل فريم.
+    final tests = appModel.filteredTests;
+    final isSearching = hasSearchQuery(appModel.searchQuery);
+
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
       slivers: [
@@ -2242,128 +2286,169 @@ class _HomeScreenState extends State<HomeScreen>
         // ✅ 2. قسم العروض الحصرية — وجواه السلايدر المتحرك
         _buildOffersSection(isDark, appModel),
 
-        // تصفح الفحوصات (التصنيفات)
+        // عنوان القسم
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(20, 20, 20, 15),
+            child: Text(
+              '🔍 تصفح الفحوصات',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: LabTheme.primaryColor,
+              ),
+            ),
+          ),
+        ),
+
+        // ✅ مربع البحث — مثبّت فوق حتى يبقى بالمتناول وانت تتصفح النتائج
+        SliverPersistentHeader(
+          pinned: true,
+          delegate: PinnedSearchBarHeader(
+            child: TestSearchField(
+              controller: _searchController,
+              onChanged: appModel.setSearchQuery,
+            ),
+          ),
+        ),
+
+        // ✅ التصنيفات كقائمة منسدلة بدل صف الشرائح الأفقي —
+        //    الشرائح كانت تحتاج سحب أفقي والمستخدم ما يشوف شنو موجود
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 15),
-                  child: Text(
-                    '🔍 تصفح الفحوصات',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: LabTheme.primaryColor,
-                    ),
-                  ),
-                ),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  child: Row(
-                    children: appModel.categories.map((category) {
-                      final isSelected = appModel.selectedCategory == category;
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 12),
-                        child: InkWell(
-                          onTap: () {
-                            // ✅ لو نفس التصنيف المختار، ما نعيد الأنيميشن
-                            //    حتى ما تصير رفّة بلا فائدة
-                            if (isSelected) return;
-                            appModel.setCategory(category);
-                            _animationController.reset();
-                            _animationController.forward();
-                          },
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 300),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 12),
-                            decoration: BoxDecoration(
-                              gradient: isSelected
-                                  ? LabTheme.primaryGradient
-                                  : LinearGradient(
-                                      colors: isDark
-                                          ? [
-                                              const Color(0xFF065F46),
-                                              const Color(0xFF065F46)
-                                            ]
-                                          : [Colors.white, Colors.white],
-                                    ),
-                              borderRadius: BorderRadius.circular(25),
-                              border: Border.all(
-                                color: isSelected
-                                    ? LabTheme.primaryColor
-                                    : Colors.grey.withOpacity(0.3),
-                                width: isSelected ? 2 : 1,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  _getCategoryIcon(category),
-                                  size: 16,
-                                  color: isSelected
-                                      ? Colors.white
-                                      : LabTheme.primaryColor,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  category,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: isSelected
-                                        ? Colors.white
-                                        : (isDark
-                                            ? Colors.white70
-                                            : Colors.grey[700]),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-              ],
+            padding: const EdgeInsets.fromLTRB(20, 15, 20, 20),
+            child: CategoryDropdown(
+              categories: appModel.categories,
+              selected: appModel.selectedCategory,
+              counts: appModel.categoryCounts,
+              onChanged: (category) {
+                appModel.setCategory(category);
+                _animationController.reset();
+                _animationController.forward();
+              },
             ),
           ),
         ),
 
-        // شبكة الفحوصات
-        // ✅ التلاشي محصور بالشبكة فقط — ما يمس الـ AppBar ولا شريط التنقل
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          sliver: SliverFadeTransition(
-            opacity: _gridFadeAnimation,
-            sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 15,
-                mainAxisSpacing: 15,
-                childAspectRatio: 0.9,
-              ),
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final test = appModel.filteredTests[index];
-                  final cartItem = appModel.cart.firstWhere(
-                    (item) => item.test.id == test.id,
-                    orElse: () => CartItem(test: test, quantity: 0),
-                  );
-
-                  return _buildCreativeTestCard(test, cartItem, appModel);
-                },
-                childCount: appModel.filteredTests.length,
+        // ✅ عدّاد النتائج — يبيّن بس وقت البحث حتى ما يزحم الشاشة
+        if (isSearching && tests.isNotEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(
+                '${tests.length} نتيجة',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[600],
+                ),
               ),
             ),
           ),
-        ),
+
+        // ✅ ماكو نتائج — رسالة واضحة بدل شاشة فاضية بلا تفسير
+        if (tests.isEmpty)
+          SliverToBoxAdapter(child: _buildNoSearchResults(appModel))
+        else
+          // شبكة الفحوصات
+          // ✅ التلاشي محصور بالشبكة فقط — ما يمس الـ AppBar ولا شريط التنقل
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            sliver: SliverFadeTransition(
+              opacity: _gridFadeAnimation,
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 15,
+                  mainAxisSpacing: 15,
+                  childAspectRatio: 0.9,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final test = tests[index];
+                    final cartItem = appModel.cart.firstWhere(
+                      (item) => item.test.id == test.id,
+                      orElse: () => CartItem(test: test, quantity: 0),
+                    );
+
+                    return _buildCreativeTestCard(test, cartItem, appModel);
+                  },
+                  childCount: tests.length,
+                ),
+              ),
+            ),
+          ),
       ],
+    );
+  }
+
+  // ✅ حالة "ماكو نتيجة" — وتعرض مخرج للمستخدم بدل ما يبقى واقف
+  Widget _buildNoSearchResults(LabAppModel appModel) {
+    final isSearching = hasSearchQuery(appModel.searchQuery);
+    final elsewhere = appModel.matchesOutsideCategory;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(30, 20, 30, 50),
+      child: Column(
+        children: [
+          Icon(
+            isSearching ? Icons.search_off_rounded : Icons.science_outlined,
+            size: 64,
+            color: LabTheme.primaryColor.withOpacity(0.35),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            isSearching
+                ? 'ماكو نتيجة لـ "${appModel.searchQuery.trim()}"'
+                : 'ماكو تحاليل بهذا التصنيف',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontFamily: 'Cairo',
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isSearching
+                ? 'جرّب كلمة أقصر أو اسم التحليل بالإنجليزي'
+                : 'اختر تصنيف ثاني من فوق',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Cairo',
+              fontSize: 13,
+              color: Colors.grey[600],
+            ),
+          ),
+
+          // لو النتائج موجودة بتصنيف ثاني، ما نغيّر اختياره من وراه —
+          // نعرضله زر يقرر بيه هو
+          if (isSearching && elsewhere > 0) ...[
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: () {
+                appModel.setCategory('الكل');
+                _animationController.reset();
+                _animationController.forward();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: LabTheme.primaryColor,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              icon: const Icon(Icons.travel_explore_rounded, size: 20),
+              label: Text(
+                'دوّر بكل التصنيفات ($elsewhere نتيجة)',
+                style: const TextStyle(
+                    fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -4966,20 +5051,10 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // داخل _HomeScreenState (وكذلك DesktopHomeScreenState إذا كنت تستخدمه)
-  IconData _getCategoryIcon(String category) {
-    final icons = {
-      'فحوصات الدم': Icons.bloodtype,
-      'الكيمياء الحيوية': Icons.science, // ✅ أيقونة أنبوب اختبار
-      'فايروسات': Icons.coronavirus, // ✅ أيقونة الفايروس
-      'مناعة': Icons.shield_outlined, // ✅ أيقونة درع المناعة
-      'البكتيريا': Icons.bug_report, // ✅ أيقونة البكتيريا
-      'الهرمونات': Icons.insights,
-      'الفيتامينات': Icons.eco,
-      'وظائف الأعضاء': Icons.monitor_heart,
-      'أخرى': Icons.more_horiz,
-    };
-    return icons[category] ?? Icons.medical_services;
-  }
+  // ✅ الأيقونات تجي من مصدر واحد (widgets/common/category_dropdown) حتى
+  //    كارت التحليل والقائمة يطلعون بنفس الأيقونة. كانت خريطة ثابتة بـ9
+  //    أقسام، فأي قسم جديد (الكبد/السكر/الغدة الدرقية...) يطلع بأيقونة عامة.
+  IconData _getCategoryIcon(String category) => categoryIcon(category);
 
   String _formatPrice(int price) {
     return '${price.toString().replaceAllMapped(
