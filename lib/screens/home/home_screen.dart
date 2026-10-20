@@ -456,6 +456,18 @@ class LabAppModel extends ChangeNotifier {
 
   Future<bool> submitOrderToBackend(String paymentMethod,
       {String? location}) async {
+    final success = await _postOrder(_cart, paymentMethod, location: location);
+    if (success) {
+      clearCart();
+      await fetchMyOrders();
+    }
+    return success;
+  }
+
+  // ✅ الإرسال الفعلي للسيرفر — ياخذ العناصر كباراميتر بدل ما يقرا السلة،
+  //    حتى "إعادة الطلب" من السجل تستعمله بلا ما تخربط سلة المستخدم الحالية
+  Future<bool> _postOrder(List<CartItem> items, String paymentMethod,
+      {String? location}) async {
     _isSubmitting = true;
     notifyListeners();
 
@@ -474,8 +486,8 @@ class LabAppModel extends ChangeNotifier {
         "phone": _userPhone,
         "address": _userAddress,
         "location": location,
-        "items": _cart.map((e) => e.toJson()).toList(),
-        "totalAmount": getCartTotalPrice(), // السعر بدون زيادات
+        "items": items.map((e) => e.toJson()).toList(),
+        "totalAmount": totalPriceOf(items), // السعر بدون زيادات
         "paymentMethod": paymentMethod,
         "status": "PENDING",
         "date": DateTime.now().toIso8601String(),
@@ -490,8 +502,6 @@ class LabAppModel extends ChangeNotifier {
       notifyListeners();
 
       if (response.statusCode == 201 || response.statusCode == 200) {
-        clearCart();
-        await fetchMyOrders();
         return true;
       } else {
         print("❌ Server Error: ${response.body}"); // طباعة سبب الرفض من السيرفر
@@ -503,6 +513,83 @@ class LabAppModel extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+  }
+
+  // =================================================================
+  // 🔁 إعادة طلب سابق من السجل
+  // =================================================================
+
+  /// يدوّر التحليل بالـ id بكل المصادر: تحاليل السيرفر + العروض والباقات
+  /// المحلية + البانرات المثبّتة. السجل يرجع من السيرفر بس id واسم
+  /// (وغالباً الاسم إنجليزي)، فنرجع للكتالوج حتى نعرض الاسم العربي والسعر الحالي.
+  MedicalTest? findTestById(String id) {
+    if (id.isEmpty) return null;
+    for (final t in _allTests) {
+      if (t.id == id) return t;
+    }
+    for (final o in _kLabOffers) {
+      if (o.test.id == id) return o.test;
+    }
+    for (final p in _kPinnedPromos) {
+      final t = p['test'];
+      if (t is MedicalTest && t.id == id) return t;
+    }
+    return null;
+  }
+
+  /// الاسم العربي للعنصر بالسجل — من الكتالوج إذا موجود، وإلا اللي خزّنه السيرفر
+  String displayNameOf(CartItem item) {
+    final fromCatalogue = findTestById(item.test.id);
+    if (fromCatalogue != null && fromCatalogue.nameAr.isNotEmpty) {
+      return fromCatalogue.nameAr;
+    }
+    if (item.test.nameAr.isNotEmpty) return item.test.nameAr;
+    if (item.test.nameEn.isNotEmpty) return item.test.nameEn;
+    return 'تحليل';
+  }
+
+  /// يحوّل عناصر طلب قديم لعناصر جاهزة للإرسال من جديد.
+  /// - موجود بالكتالوج → ياخذ بياناته وسعره الحالي
+  /// - مو موجود بس عنده id وسعر → يعيده مثل ما انطلب أول مرة
+  /// - بلا id (طلبات قديمة جداً كانت تخزّن الاسم كنص) → ينشال، ما نكدر نرسله
+  List<CartItem> reorderItemsFor(Order order) {
+    final result = <CartItem>[];
+    for (final item in order.items) {
+      final current = findTestById(item.test.id);
+      if (current != null) {
+        result.add(CartItem(test: current, quantity: item.quantity));
+      } else if (item.test.id.isNotEmpty && item.test.price > 0) {
+        // السيرفر يرجع الاسم بحقل testName فيدخل nameAr ويبقى nameEn فاضي،
+        //   والإرسال يقرا nameEn — فنعبّيه حتى ما يروح الطلب بلا اسم
+        final old = item.test;
+        result.add(CartItem(
+          test: MedicalTest(
+            id: old.id,
+            nameAr: old.nameAr,
+            nameEn: old.nameEn.isNotEmpty ? old.nameEn : old.nameAr,
+            code: old.code,
+            price: old.price,
+            category: old.category,
+            descriptionAr: old.descriptionAr,
+            descriptionEn: old.descriptionEn,
+            keywords: old.keywords,
+          ),
+          quantity: item.quantity,
+        ));
+      }
+    }
+    return result;
+  }
+
+  /// يرسل العناصر (من reorderItemsFor) كطلب جديد. ياخذ القائمة جاهزة حتى
+  /// اللي ينرسل هو نفسه اللي شافه المستخدم بنافذة التأكيد بالضبط.
+  /// الدفع 'cash' دائماً — نفس شاشة إتمام الطلب، الدفع بالبطاقة انشال.
+  /// ما يلمس السلة، وبعد النجاح يحدّث السجل حتى الطلب الجديد يطلع فوق.
+  Future<bool> reorder(List<CartItem> items) async {
+    if (items.isEmpty) return false;
+    final success = await _postOrder(items, 'cash');
+    if (success) await fetchMyOrders();
+    return success;
   }
 
   Future<bool> updateProfile(
@@ -623,8 +710,11 @@ class LabAppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  int getCartTotalPrice() {
-    return _cart.fold(
+  int getCartTotalPrice() => totalPriceOf(_cart);
+
+  // مجموع أي قائمة عناصر — السلة أو إعادة طلب من السجل
+  int totalPriceOf(List<CartItem> items) {
+    return items.fold(
         0, (sum, item) => sum + (item.test.price * item.quantity));
   }
 
@@ -745,7 +835,14 @@ class OrderHistoryScreen extends StatelessWidget {
               itemCount: appModel.orders.length,
               itemBuilder: (context, index) {
                 final order = appModel.orders[index];
-                return _buildOrderCard(context, order);
+                // المفتاح بالـ id حتى لمن ينضاف طلب جديد فوق، حالة الفتح
+                //   تبقى ويا طلبها وما تنتقل للكارت اللي صار بمكانه
+                return _OrderHistoryCard(
+                  key: order.id.isNotEmpty
+                      ? ValueKey('order_${order.id}')
+                      : ValueKey('order_idx_$index'),
+                  order: order,
+                );
               },
             ),
           );
@@ -754,8 +851,301 @@ class OrderHistoryScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildOrderCard(BuildContext context, Order order) {
+}
+
+// ✅ كارت طلب بالسجل — الضغط عليه يبدّل "عدد الفحوصات" بقائمة أسمائها،
+//    وزر "إعادة الطلب" يرسل نفس الفحوصات كطلب جديد بعد تأكيد واحد
+class _OrderHistoryCard extends StatefulWidget {
+  final Order order;
+  const _OrderHistoryCard({super.key, required this.order});
+
+  @override
+  State<_OrderHistoryCard> createState() => _OrderHistoryCardState();
+}
+
+class _OrderHistoryCardState extends State<_OrderHistoryCard> {
+  bool _expanded = false;
+  bool _reordering = false;
+
+  Order get order => widget.order;
+
+  // نص الكمية جنب الاسم — يبيّن بس لو انطلب أكثر من مرة
+  String _withQty(String name, int qty) => qty > 1 ? '$name ×$qty' : name;
+
+  Future<void> _confirmReorder(LabAppModel appModel) async {
+    // ناخذ الـ messenger قبل أي await — بعدها الكارت ممكن ينهدم
+    //   (السجل يتحدّث والقائمة تنبني من جديد)
+    final messenger = ScaffoldMessenger.of(context);
+    final items = appModel.reorderItemsFor(order);
+
+    if (items.isEmpty) {
+      // ✅ فشل واضح بدل زر ما يسوي شي
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'ما نكدر نعيد هذا الطلب — فحوصاته قديمة وما متوفرة حالياً. اطلبها من تصفح الفحوصات',
+            style: TextStyle(fontFamily: 'Cairo'),
+          ),
+          backgroundColor: LabTheme.warningColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final skipped = order.items.length - items.length;
+    final total = appModel.totalPriceOf(items);
+
+    // تأكيد واحد قبل الإرسال — ضغطة بالغلط بالسجل ما لازم تطلّع طلب حقيقي
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.replay_rounded, color: LabTheme.limeDark),
+            SizedBox(width: 8),
+            Text('إعادة الطلب',
+                style: TextStyle(
+                    fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'راح ينرسل طلب جديد بنفس الفحوصات:',
+                style: TextStyle(
+                    fontFamily: 'Cairo', fontSize: 13, color: Colors.grey[700]),
+              ),
+              const SizedBox(height: 10),
+              for (final item in items)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.check_circle,
+                          size: 16, color: LabTheme.limeColor),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          _withQty(appModel.displayNameOf(item), item.quantity),
+                          style: const TextStyle(
+                              fontFamily: 'Cairo', fontSize: 13),
+                        ),
+                      ),
+                      Text(
+                        '${item.test.price * item.quantity} د.ع',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+              if (skipped > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  '⚠️ $skipped من فحوصات الطلب القديم ما متوفرة حالياً وما راح تنضاف',
+                  style: const TextStyle(
+                      fontFamily: 'Cairo',
+                      fontSize: 12,
+                      color: LabTheme.warningColor),
+                ),
+              ],
+              const Divider(height: 22),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('المجموع:',
+                      style: TextStyle(
+                          fontFamily: 'Cairo', fontWeight: FontWeight.bold)),
+                  Text(
+                    '$total د.ع',
+                    style: const TextStyle(
+                      fontFamily: 'Cairo',
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: LabTheme.limeDark,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'الدفع عند الاستلام • بالأسعار الحالية',
+                style: TextStyle(
+                    fontFamily: 'Cairo', fontSize: 11, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء',
+                style: TextStyle(fontFamily: 'Cairo', color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: LabTheme.limeDark,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('تأكيد الطلب',
+                style: TextStyle(
+                    fontFamily: 'Cairo',
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _reordering = true);
+    final success = await appModel.reorder(items);
+    if (mounted) setState(() => _reordering = false);
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          success
+              ? 'تم إرسال الطلب من جديد ✅'
+              : 'تعذّر إرسال الطلب. تحقق من الإنترنت وحاول مرة أخرى.',
+          style: const TextStyle(fontFamily: 'Cairo'),
+        ),
+        backgroundColor: success ? Colors.green : Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // قائمة أسماء الفحوصات — تطلع مكان العدد لمن ينفتح الكارت
+  Widget _buildItemsList(LabAppModel appModel, bool isDark) {
+    if (order.items.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Text(
+          'ماكو تفاصيل فحوصات محفوظة لهذا الطلب',
+          style: TextStyle(
+              fontFamily: 'Cairo', fontSize: 13, color: Colors.grey[600]),
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: LabTheme.limeColor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: LabTheme.limeColor.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          for (final item in order.items)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle,
+                      size: 16, color: LabTheme.limeColor),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _withQty(appModel.displayNameOf(item), item.quantity),
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? Colors.white : Colors.black87,
+                      ),
+                    ),
+                  ),
+                  // السعر اللي انطلب بيه وقتها — مو السعر الحالي
+                  if (item.test.price > 0)
+                    Text(
+                      '${item.test.price * item.quantity} د.ع',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? Colors.white60 : Colors.grey[600],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReorderButton(LabAppModel appModel) {
+    final busy = _reordering || appModel.isSubmitting;
+    return Opacity(
+      opacity: busy ? 0.7 : 1,
+      child: Material(
+        color: Colors.transparent,
+        child: Ink(
+          decoration: BoxDecoration(
+            gradient: LabTheme.limeGradient,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            // onTap ما يصير null وقت الإرسال — لو صار null الضغطة تعبر
+            //   للكارت اللي وراه وتسكّره/تفتحه
+            onTap: () {
+              if (!busy) _confirmReorder(appModel);
+            },
+            child: SizedBox(
+              height: 44,
+              width: double.infinity,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (_reordering)
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  else
+                    const Icon(Icons.replay_rounded,
+                        color: Colors.white, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    _reordering ? 'جاري الإرسال...' : 'إعادة الطلب',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'Cairo',
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // listen: false — الـ Consumer مال السجل يعيد بناء الكارتات أصلاً
+    //   لمن يتغيّر الموديل
+    final appModel = Provider.of<LabAppModel>(context, listen: false);
     Color statusColor;
     String statusText;
 
@@ -786,103 +1176,134 @@ class OrderHistoryScreen extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       color: isDark ? const Color(0xFF2D3250) : Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  "طلب #${order.orderNumber}",
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'Cairo',
-                    fontSize: 16,
-                    color: isDark ? Colors.white : Colors.black,
-                  ),
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: statusColor.withOpacity(0.5)),
-                  ),
-                  child: Text(
-                    statusText,
+      // حتى موجة الضغط تنقص على زوايا الكارت المدوّرة
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => setState(() => _expanded = !_expanded),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    "طلب #${order.orderNumber}",
                     style: TextStyle(
-                      color: statusColor,
-                      fontSize: 12,
                       fontWeight: FontWeight.bold,
+                      fontFamily: 'Cairo',
+                      fontSize: 16,
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: statusColor.withOpacity(0.5)),
+                    ),
+                    child: Text(
+                      statusText,
+                      style: TextStyle(
+                        color: statusColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'Cairo',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(height: 24),
+              Row(
+                children: [
+                  const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Text(
+                    "${order.date.year}-${order.date.month}-${order.date.day}",
+                    style: TextStyle(
+                        color: isDark ? Colors.white70 : Colors.grey[700],
+                        fontSize: 13),
+                  ),
+                  const Spacer(),
+                  const Icon(Icons.access_time, size: 16, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Text(
+                    "${order.date.hour}:${order.date.minute.toString().padLeft(2, '0')}",
+                    style: TextStyle(
+                        color: isDark ? Colors.white70 : Colors.grey[700],
+                        fontSize: 13),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // ✅ عدد الفحوصات — الضغط على الكارت يبدّله بأسمائها
+              Row(
+                children: [
+                  Icon(Icons.medical_services_outlined,
+                      size: 16,
+                      color: _expanded ? LabTheme.limeDark : Colors.grey),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _expanded
+                          ? 'الفحوصات المطلوبة'
+                          : "${order.items.length} فحوصات • اضغط للعرض",
+                      style: TextStyle(
+                          color: _expanded
+                              ? LabTheme.limeDark
+                              : (isDark ? Colors.white70 : Colors.grey[700]),
+                          fontWeight:
+                              _expanded ? FontWeight.bold : FontWeight.normal,
+                          fontFamily: 'Cairo',
+                          fontSize: 13),
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(Icons.keyboard_arrow_down_rounded,
+                        size: 22,
+                        color: _expanded ? LabTheme.limeDark : Colors.grey),
+                  ),
+                ],
+              ),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeInOut,
+                alignment: Alignment.topCenter,
+                child: _expanded
+                    ? _buildItemsList(appModel, isDark)
+                    : const SizedBox(width: double.infinity),
+              ),
+              const SizedBox(height: 12),
+              // عرض السعر الكلي
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    "المجموع الكلي:",
+                    style: TextStyle(
+                        fontFamily: 'Cairo',
+                        color: isDark ? Colors.white60 : Colors.grey[600]),
+                  ),
+                  Text(
+                    "${order.totalAmount} د.ع",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: LabTheme.primaryColor,
                       fontFamily: 'Cairo',
                     ),
                   ),
-                ),
-              ],
-            ),
-            const Divider(height: 24),
-            Row(
-              children: [
-                const Icon(Icons.calendar_today, size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Text(
-                  "${order.date.year}-${order.date.month}-${order.date.day}",
-                  style: TextStyle(
-                      color: isDark ? Colors.white70 : Colors.grey[700],
-                      fontSize: 13),
-                ),
-                const Spacer(),
-                const Icon(Icons.access_time, size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Text(
-                  "${order.date.hour}:${order.date.minute.toString().padLeft(2, '0')}",
-                  style: TextStyle(
-                      color: isDark ? Colors.white70 : Colors.grey[700],
-                      fontSize: 13),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // عرض عدد العناصر
-            Row(
-              children: [
-                const Icon(Icons.medical_services_outlined,
-                    size: 16, color: Colors.grey),
-                const SizedBox(width: 8),
-                Text(
-                  "${order.items.length} فحوصات",
-                  style: TextStyle(
-                      color: isDark ? Colors.white70 : Colors.grey[700],
-                      fontFamily: 'Cairo',
-                      fontSize: 13),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // عرض السعر الكلي
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  "المجموع الكلي:",
-                  style: TextStyle(
-                      fontFamily: 'Cairo',
-                      color: isDark ? Colors.white60 : Colors.grey[600]),
-                ),
-                Text(
-                  "${order.totalAmount} د.ع",
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                    color: LabTheme.primaryColor,
-                    fontFamily: 'Cairo',
-                  ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+              const SizedBox(height: 14),
+              _buildReorderButton(appModel),
+            ],
+          ),
         ),
       ),
     );
@@ -1055,71 +1476,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
             const Divider(height: 40, thickness: 1),
 
-            // 4. قسم "عن المختبر" (البيانات الجديدة)
-            const Text(
-              "إدارة المختبر",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: LabTheme.primaryColor,
-                fontFamily: 'Cairo',
-              ),
-            ),
-            const SizedBox(height: 15),
-
-            // ✅ بطاقة الإدارة الجديدة (مجتبى وحسين)
-            Container(
-              padding: const EdgeInsets.all(15),
-              decoration: LabTheme.cardDecoration(context),
-              child: Column(
-                children: [
-                  // الاسم الأول
-                  Row(
-                    children: [
-                      const Icon(Icons.admin_panel_settings,
-                          color: Colors.blue),
-                      const SizedBox(width: 15),
-                      Expanded(
-                        child: Text(
-                          "مجتبى علي محمد",
-                          style: const TextStyle(
-                            fontFamily: 'Cairo',
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                            color: Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8.0),
-                    child: Divider(),
-                  ),
-                  // الاسم الثاني
-                  Row(
-                    children: [
-                      const Icon(Icons.admin_panel_settings,
-                          color: Colors.indigo),
-                      const SizedBox(width: 15),
-                      Expanded(
-                        child: Text(
-                          "حسين علي حنظل",
-                          style: const TextStyle(
-                            fontFamily: 'Cairo',
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                            color: Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 15),
+            // ✅ قسم "إدارة المختبر" (عنوانه + كارت الأسماء) انشال بطلب
+            //    صاحب المختبر — بقت معلومات التواصل بس
 
             // ✅ معلومات التواصل والموقع الجديدة
             Container(
@@ -1178,11 +1536,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   // ✅ التعديل هنا: تحويل الـ Container إلى InkWell لجعله قابل للضغط
                   InkWell(
                     onTap: () async {
-                      // رابط موقع تيم القادة
-                      final Uri url = Uri.parse('https://alqadateam.com/');
-                      if (await canLaunchUrl(url)) {
-                        await launchUrl(url,
+                      // ✅ رابط إنستغرام (كان رابط موقع تيم القادة)
+                      final Uri url = Uri.parse(
+                          'https://www.instagram.com/p/DY7xlVJN4BI/?srtk=b2p4bnYxeXEzNTdk');
+                      // ناخذ الـ messenger قبل الـ await — بعده ما مضمون
+                      //   الـ context بعده صالح
+                      final messenger = ScaffoldMessenger.of(context);
+                      // ما نستعمل canLaunchUrl كبوابة — بالآيفون بلا
+                      //   LSApplicationQueriesSchemes يرجّع false فالضغطة
+                      //   كانت تموت بصمت. launchUrl نفسها تكول إذا فشلت
+                      bool opened = false;
+                      try {
+                        opened = await launchUrl(url,
                             mode: LaunchMode.externalApplication);
+                      } catch (_) {
+                        opened = false;
+                      }
+                      if (!opened) {
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'تعذّر فتح الرابط — تأكد من وجود متصفح أو تطبيق إنستغرام',
+                              style: TextStyle(fontFamily: 'Cairo'),
+                            ),
+                            backgroundColor: LabTheme.warningColor,
+                          ),
+                        );
                       }
                     },
                     borderRadius: BorderRadius.circular(20),
@@ -1967,6 +2346,18 @@ class LabTheme {
     colors: [Color(0xFF34D399), Color(0xFF6EE7B7)],
   );
 
+  // ✅ لون كارت "فحص الغدة الدرقية" (أخضر ليموني) — صار هوية الهيدر
+  //    الرئيسي وصفحة كل العروض وكارتات الفحوصات. كارت الغدة نفسه ياخذه
+  //    من هنا (_kOfferGreens) حتى لو تغيّر يتغيّر بكل مكان سوا
+  static const Color limeDark = Color(0xFF3F6212);
+  static const Color limeColor = Color(0xFF84CC16);
+
+  static const LinearGradient limeGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [limeDark, limeColor],
+  );
+
   static BoxDecoration cardDecoration(BuildContext context,
       {bool elevated = true}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -2151,14 +2542,15 @@ class _HomeScreenState extends State<HomeScreen>
       backgroundColor: Colors.transparent,
       flexibleSpace: Container(
         decoration: BoxDecoration(
-          gradient: LabTheme.primaryGradient,
+          // ✅ نفس تدرّج كارت الغدة الدرقية
+          gradient: LabTheme.limeGradient,
           borderRadius: const BorderRadius.only(
             bottomLeft: Radius.circular(30),
             bottomRight: Radius.circular(30),
           ),
           boxShadow: [
             BoxShadow(
-              color: LabTheme.primaryColor.withOpacity(0.3),
+              color: LabTheme.limeDark.withOpacity(0.3),
               blurRadius: 20,
               spreadRadius: 5,
               offset: const Offset(0, 5),
@@ -2599,12 +2991,14 @@ class _HomeScreenState extends State<HomeScreen>
                 expandedHeight: 160,
                 pinned: true,
                 elevation: 0,
-                backgroundColor: LabTheme.primaryColor,
+                // ✅ الشريط المطوي (اللي بيه سهم الرجوع) + الخلفية المفتوحة
+                //    كلهم بلون كارت الغدة الدرقية
+                backgroundColor: LabTheme.limeDark,
                 iconTheme: const IconThemeData(color: Colors.white),
                 flexibleSpace: FlexibleSpaceBar(
                   background: Container(
-                    decoration: BoxDecoration(
-                      gradient: LabTheme.primaryGradient,
+                    decoration: const BoxDecoration(
+                      gradient: LabTheme.limeGradient,
                     ),
                     child: Stack(
                       children: [
@@ -3634,14 +4028,34 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildCreativeTestCard(
       MedicalTest test, CartItem cartItem, LabAppModel appModel) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
+    // ✅ الكارت كله بتدرّج كارت "فحص الغدة الدرقية" — نفس ستايل كارت العرض
+    //    (_buildOfferCard): خلفية متدرّجة، نص أبيض، زر إضافة دائرة بيضاء
     return InkWell(
       onTap: () {},
+      borderRadius: BorderRadius.circular(20),
       child: Container(
-        decoration: LabTheme.cardDecoration(context),
+        decoration: BoxDecoration(
+          gradient: LabTheme.limeGradient,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: LabTheme.limeColor.withOpacity(0.35),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        // يقص الأيقونة الكبيرة الباهتة على زوايا الكارت المدوّرة
+        clipBehavior: Clip.antiAlias,
         child: Stack(
           children: [
+            // زخرفة خلفية — أيقونة القسم كبيرة وباهتة، مثل كارت العرض
+            Positioned(
+              right: -15,
+              bottom: 20,
+              child: Icon(_getCategoryIcon(test.category),
+                  size: 80, color: Colors.white.withOpacity(0.1)),
+            ),
             Positioned(
               top: 0,
               right: 0,
@@ -3649,8 +4063,8 @@ class _HomeScreenState extends State<HomeScreen>
                 width: 60,
                 height: 60,
                 decoration: BoxDecoration(
-                  color: _getCategoryColor(test.category).withOpacity(0.1),
-                  borderRadius: BorderRadius.only(
+                  color: Colors.white.withOpacity(0.18),
+                  borderRadius: const BorderRadius.only(
                     topRight: Radius.circular(20),
                     bottomLeft: Radius.circular(40),
                   ),
@@ -3666,18 +4080,20 @@ class _HomeScreenState extends State<HomeScreen>
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Icon(_getCategoryIcon(test.category),
-                          color: _getCategoryColor(test.category)),
+                          color: Colors.white),
                       if (cartItem.quantity > 0)
                         Container(
-                          padding:
-                              EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: LabTheme.accentColor,
+                            color: Colors.white,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text('${cartItem.quantity}',
-                              style:
-                                  TextStyle(color: Colors.white, fontSize: 12)),
+                              style: const TextStyle(
+                                  color: LabTheme.limeDark,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold)),
                         )
                     ],
                   ),
@@ -3690,26 +4106,46 @@ class _HomeScreenState extends State<HomeScreen>
                       Text(test.nameAr,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
+                          style: const TextStyle(
                               fontWeight: FontWeight.bold,
-                              color: isDark ? Colors.white : Colors.black)),
-                      SizedBox(height: 5),
+                              color: Colors.white)),
+                      const SizedBox(height: 5),
                       Text('${test.price} د.ع',
-                          style: TextStyle(
-                              color: LabTheme.primaryColor,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
                               fontWeight: FontWeight.bold)),
                     ],
                   ),
                 ),
-                Spacer(),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: IconButton(
-                    icon: Icon(Icons.add_circle,
-                        color: LabTheme.primaryColor, size: 30),
-                    onPressed: () => appModel.addToCart(test),
+                const Spacer(),
+                // زر إضافة سريع — دائرة بيضاء بداخلها + ليموني، نفس كارت العرض
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: InkWell(
+                      onTap: () => appModel.addToCart(test),
+                      customBorder: const CircleBorder(),
+                      child: Container(
+                        padding: const EdgeInsets.all(7),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black26,
+                              blurRadius: 5,
+                              offset: Offset(0, 2),
+                            )
+                          ],
+                        ),
+                        child: const Icon(Icons.add,
+                            color: LabTheme.limeColor, size: 22),
+                      ),
+                    ),
                   ),
-                )
+                ),
               ],
             ),
           ],
@@ -9214,7 +9650,7 @@ const List<List<Color>> _kOfferGreens = [
   [Color(0xFF115E59), Color(0xFF14B8A6)], // تيل غامق
   [Color(0xFF166534), Color(0xFF4ADE80)], // أخضر فاتح
   [Color(0xFF022C22), Color(0xFF059669)], // زمردي غامق
-  [Color(0xFF3F6212), Color(0xFF84CC16)], // أخضر ليموني
+  [LabTheme.limeDark, LabTheme.limeColor], // أخضر ليموني (الغدة الدرقية)
   [Color(0xFF047857), Color(0xFF34D399)], // زمردي متوسط
   [Color(0xFF052E16), Color(0xFF16A34A)], // أخضر غابة
 ];
